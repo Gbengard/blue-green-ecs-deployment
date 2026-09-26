@@ -17,7 +17,7 @@ phases:
       - echo Logging in to ECR
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
-      # FIXED: Hardcoded your ECR repository name here to prevent empty variable errors
+      # HARDCODED: Set your verified ECR repository path
       - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/bluegreen-demo-app
 
   build:
@@ -31,7 +31,8 @@ phases:
       - docker push $REPO_URI:$IMAGE_TAG
       - docker push $REPO_URI:latest
       - echo Writing imagedefinitions.json for the CodePipeline ECS deploy action
-      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+      # HARDCODED: Replaced $CONTAINER_NAME with 'bluegreen-demo-container'
+      - printf '[{"name":"bluegreen-demo-container","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
       - cat imagedefinitions.json
 
 artifacts:
