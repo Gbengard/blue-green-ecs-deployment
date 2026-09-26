@@ -6,14 +6,15 @@ version: 0.2
 # image, registers a new task definition revision, and calls UpdateService.
 # ECS itself then handles the blue/green shift, because the service's
 # DeploymentConfiguration.Strategy is set to BLUE_GREEN.
-#
-# Note: this is simpler than the old CodeDeploy-based buildspec, which had
-# to generate taskdef.json and appspec.yaml as well — neither is needed
-# with native ECS blue/green.
 
 phases:
   pre_build:
     commands:
+      - echo Fetching AWS Environment Metadata...
+      # Dynamically resolves the active account ID and region if they aren't injected externally
+      - if [ -z "$AWS_ACCOUNT_ID" ]; then AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text); fi
+      - if [ -z "$AWS_REGION" ]; then AWS_REGION=$(aws configure get region); fi
+      
       - echo Logging in to ECR
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
