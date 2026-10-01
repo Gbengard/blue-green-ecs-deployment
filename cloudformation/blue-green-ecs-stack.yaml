@@ -134,6 +134,19 @@ Resources:
           FromPort: !Ref ContainerPort
           ToPort: !Ref ContainerPort
           SourceSecurityGroupId: !Ref AlbSecurityGroup
+      SecurityGroupEgress:
+        # Explicit on purpose. Fargate needs to reach the ECR API and the
+        # ECR image layer store (both HTTPS) to pull the image, and
+        # CloudWatch Logs (also HTTPS) to ship container logs. Without
+        # this, tasks fail to start with
+        # "ResourceInitializationError: unable to pull secrets or registry
+        # auth ... dial tcp ... i/o timeout" — the task can resolve the
+        # address but the security group silently drops the connection.
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS out — required to reach ECR, CloudWatch Logs, and STS
 
   ##########################################################################
   # LOAD BALANCER — blue (primary) + green (alternate) target groups,
@@ -421,10 +434,13 @@ Resources:
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
         PrivilegedMode: true # required to build Docker images
         EnvironmentVariables:
+          # AWS_REGION is deliberately NOT listed here — CodeBuild already
+          # provides it automatically as a built-in variable. Redefining it
+          # is redundant and can behave inconsistently across CodeBuild
+          # image versions, which is one of the things that was likely
+          # causing the "$AWS_REGION throwing errors" issue.
           - Name: AWS_ACCOUNT_ID
             Value: !Ref AWS::AccountId
-          - Name: AWS_REGION
-            Value: !Ref AWS::Region
           - Name: ECR_REPO_NAME
             Value: !Sub "${ProjectName}-app"
           - Name: CONTAINER_NAME

@@ -95,7 +95,7 @@ You'll need:
 
 **Important — clone this repo first.** The pipeline needs two files
 sitting in your own GitHub repo before it can run: `buildspec.yml` (tells
-CodeBuild how to build and push the image) and `Dockerfile.sample` plus
+CodeBuild how to build and push the image) and `Dockerfile` plus
 `index.html` (a placeholder app so you have something to deploy while
 testing). Clone or download this project, then push the `pipeline-config`
 folder's contents into your own GitHub repo, on the branch you plan to
@@ -207,9 +207,25 @@ people usually get wrong, so it's worth having a reference image.*
    `80`, Source: click the source field, choose **Custom**, then start
    typing `bluegreen-demo-alb-sg` and select it from the dropdown (not an
    IP address)
-8. Click **Create security group**
+8. **Check the Outbound rules section before you create it.** The
+   console pre-fills a default "All traffic" outbound rule — leave it as
+   is, or if it's been narrowed for any reason, add: Type HTTPS, Port
+   443, Destination Anywhere-IPv4 (`0.0.0.0/0`). This one is easy to miss
+   and causes a very specific, confusing failure later: the task starts,
+   then dies with
+   `ResourceInitializationError: unable to pull secrets or registry auth ... dial tcp ... i/o timeout`.
+   That error looks like it's about Secrets Manager or SSM — it isn't,
+   not in this project, since nothing here uses either. What's actually
+   happening: the task is trying to authenticate to ECR over HTTPS (port
+   443) to pull the image, the security group is silently dropping that
+   outbound connection, and ECS reports it as a generic
+   "ResourceInitializationError" because from its point of view, it just
+   never got a response. Fargate tasks need outbound HTTPS to reach ECR,
+   CloudWatch Logs, and STS — none of that works without this rule.
+9. Click **Create security group**
 
-This second rule is important: it means only traffic coming through your
+This inbound rule from Step 7 is important: it means only traffic coming
+through your
 load balancer can reach the containers, nothing else can hit them directly.
 
 ## Step 5 — Push an image to ECR
@@ -220,15 +236,29 @@ load balancer can reach the containers, nothing else can hit them directly.
 4. Click **Create repository**
 5. Open the repository → click **View push commands** (top right)
 6. A dialog shows four commands with your exact account ID and region
-   filled in — run them locally, building from the `Dockerfile.sample`
-   and `index.html` in `pipeline-config/` in this repo:
+   filled in — run them locally, building from the `Dockerfile` and
+   `index.html` in `pipeline-config/` in this repo:
 
 ```bash
 aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account-id>.dkr.ecr.<region>.amazonaws.com
-docker build -t bluegreen-demo-app -f pipeline-config/Dockerfile.sample pipeline-config/
+docker build -t bluegreen-demo-app pipeline-config/
 docker tag bluegreen-demo-app:latest <account-id>.dkr.ecr.<region>.amazonaws.com/bluegreen-demo-app:latest
 docker push <account-id>.dkr.ecr.<region>.amazonaws.com/bluegreen-demo-app:latest
 ```
+
+If `docker build` fails with `permission denied while trying to connect
+to the Docker API at unix:///var/run/docker.sock`, Docker itself is fine
+— your user just isn't in the `docker` group on this machine, so it can't
+talk to the Docker daemon without root. Fix it once, permanently, rather
+than prefixing every command with `sudo`:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Then fully log out and back in (or reboot) — a new group membership
+doesn't apply to already-open terminal sessions. Confirm it worked with
+`docker run hello-world`; if that runs without `sudo`, you're set.
 
 7. Click **Close** on the dialog once the push finishes, then refresh the
    repository page — you should see one image listed
@@ -366,6 +396,38 @@ service creation screen showing Blue/green selected, and the Load
 balancing section showing both target groups and both listener rules
 filled in — these two screens are the heart of the whole setup.*
 
+## Step 8a — Confirm the blue environment actually works
+
+Worth stopping here before building the pipeline. Everything from Steps
+1–8 is the actual infrastructure — the VPC, security groups, load
+balancer, target groups, listener rules, and the service itself. If
+something's wrong with any of it, you want to find that out now, not
+after you've also added CodeBuild and CodePipeline on top and have to
+guess which layer the problem is in.
+
+1. Open the ECS service → wait for both tasks under **Tasks** to show
+   status **Running** and health status **Healthy** (give it a minute or
+   two after creation)
+2. Go to the **EC2 console → Load Balancers → `bluegreen-demo-alb`** and
+   copy the **DNS name**
+3. Open that DNS name in a browser, or run:
+
+```bash
+curl http://<alb-dns-name>/
+```
+
+You should see the placeholder page's content (`Version: v1`). If you get
+a timeout, a 503, or nothing at all, stop here and check, in this order:
+the tasks are actually healthy in the target group (EC2 console → Target
+Groups → `bluegreen-demo-tg-blue` → **Targets** tab — both should show
+**healthy**, not **unhealthy** or **draining**), the service security
+group's outbound rule allows HTTPS (Step 4 — needed to even pull the
+image and start), and the production listener rule is actually pointing
+at `bluegreen-demo-tg-blue` (Step 6).
+
+Once this works, you know the infrastructure itself is solid, and any
+problems from here on are isolated to the pipeline you're about to build.
+
 ## Step 9 — CodeBuild project
 
 1. **CodeBuild console** → click **Create build project**
@@ -382,14 +444,54 @@ filled in — these two screens are the heart of the whole setup.*
     inside CodeBuild needs this
 11. Service role: **New service role**, name it
     `bluegreen-demo-codebuild-role`
-12. Buildspec: choose **Use a buildspec file**, path
+12. Expand **Additional configuration**, scroll to **Environment
+    variables**, and add these three — the buildspec reads them and the
+    build fails with "unbound variable" style errors without them (a
+    fourth, `AWS_REGION`, doesn't need adding — CodeBuild provides it
+    automatically, and defining your own copy of it is what was likely
+    causing that specific error):
+    - `AWS_ACCOUNT_ID` = your 12-digit account ID (run
+      `aws sts get-caller-identity --query Account --output text` if you
+      don't have it memorized)
+    - `ECR_REPO_NAME` = `bluegreen-demo-app`
+    - `CONTAINER_NAME` = `bluegreen-demo-container`
+13. Buildspec: choose **Use a buildspec file**, path
     `pipeline-config/buildspec.yml`
-13. Click **Create build project**
-14. Afterward, go to **IAM console → Roles → bluegreen-demo-codebuild-role**
-    and confirm it has ECR push permissions — if not, add an inline
-    policy granting `ecr:GetAuthorizationToken`,
-    `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, and the related
-    upload actions
+14. Click **Create build project**
+15. **Immediately go fix the service role's permissions** — this is not
+    optional, and it's the single most common reason the pipeline fails
+    at the Build stage with a permission error during `docker push`.
+    The role CodeBuild just generated only covers logging and basic S3
+    artifact access, not ECR. Go to **IAM console → Roles →
+    bluegreen-demo-codebuild-role → Add permissions → Create inline
+    policy**, switch to the **JSON** tab, paste this, then name and save it:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload"
+      ],
+      "Resource": "arn:aws:ecr:*:*:repository/bluegreen-demo-app"
+    }
+  ]
+}
+```
+
 
 ## Step 10 — CodePipeline
 
@@ -451,34 +553,54 @@ a VPC that still has subnets in it.
 
 1. **CodePipeline** — open the pipeline → click **Actions → Delete
    pipeline** → type the pipeline name to confirm → click **Delete**
-2. **CodeBuild** — open the project → **Delete build project** → confirm
-3. **CodeStar connection** — Developer Tools → Settings → Connections →
+2. **CodePipeline's S3 artifact bucket** — this one's easy to forget,
+   since the console creates it for you automatically and doesn't call
+   attention to it again. Go to the **S3 console** and look for a bucket
+   named something like `codepipeline-<region>-<random-id>` (or whatever
+   you named it, if you specified a custom one when creating the
+   pipeline). Open it, select all objects, click **Delete**, type
+   `permanently delete` to confirm, then go back and delete the bucket
+   itself the same way. It has to be empty before S3 will let you delete it.
+3. **CodeBuild** — open the project → **Delete build project** → confirm
+4. **CodeStar connection** — Developer Tools → Settings → Connections →
    select `bluegreen-demo-github-connection` → **Delete** → confirm
-4. **ECS service** — open the service → click **Update service** → set
+5. **ECS service** — open the service → click **Update service** → set
    desired tasks to `0` → click **Update** → wait for tasks to stop →
    then click **Delete service** → type the service name to confirm
-5. **ECS cluster** — once the service is gone, open the cluster → click
+6. **ECS cluster** — once the service is gone, open the cluster → click
    **Delete cluster** → type the cluster name to confirm
-6. **Load balancer** — open `bluegreen-demo-alb` → **Actions → Delete
+7. **Task definitions** — open **Task definitions → bluegreen-demo-task**,
+   select every revision, click **Deregister** (this marks them inactive
+   — they'll still show up in the list unless you also permanently delete
+   them). To fully remove them: with the same revisions selected, click
+   **Actions → Delete** — this option only appears once a revision is
+   already deregistered
+8. **Load balancer** — open `bluegreen-demo-alb` → **Actions → Delete
    load balancer** → confirm (delete this first, before the target
    groups, since it's using them)
-7. **Target groups** — delete `bluegreen-demo-tg-blue` and
+9. **Target groups** — delete `bluegreen-demo-tg-blue` and
    `bluegreen-demo-tg-green`
-8. **ECR repository** — open `bluegreen-demo-app` → **Delete** → type the
-   repository name to confirm (this force-deletes it along with any
-   images still inside)
-9. **IAM roles** — delete all four roles created in Step 7: select each
-   one → **Delete** → type the role name to confirm
-10. **Security groups** — delete `bluegreen-demo-svc-sg` first, then
+10. **ECR repository** — open `bluegreen-demo-app` → **Delete** → type the
+    repository name to confirm (this force-deletes it along with any
+    images still inside)
+11. **CloudWatch log group** — go to the **CloudWatch console → Log
+    groups**, select `/ecs/bluegreen-demo`, click **Actions → Delete log
+    group** → confirm. Nothing else deletes this one for you — it sits
+    there quietly running up a small storage cost until you remove it
+    yourself
+12. **IAM roles** — delete all four roles created in Step 7: select each
+    one → **Delete** → type the role name to confirm
+13. **Security groups** — delete `bluegreen-demo-svc-sg` first, then
     `bluegreen-demo-alb-sg` (the service one references the ALB one, so
     it has to go first)
-11. **VPC networking** — delete both subnets, then the route table, then
+14. **VPC networking** — delete both subnets, then the route table, then
     detach and delete the internet gateway, then finally delete the VPC
     itself, using **Actions → Delete** on each one
 
-Go back through the VPC, EC2, ECS, ECR, and S3 consoles afterward and
-check nothing was left behind — a resource with a dependency you missed
-will sometimes fail quietly instead of showing a clear error.
+Go back through the VPC, EC2, ECS, ECR, S3, and CloudWatch consoles
+afterward and check nothing was left behind — a resource with a
+dependency you missed will sometimes fail quietly instead of showing a
+clear error.
 
 ---
 
@@ -1135,7 +1257,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION=$(aws configure get region)
 
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
-docker build -t bluegreen-demo-app -f pipeline-config/Dockerfile.sample pipeline-config/
+docker build -t bluegreen-demo-app pipeline-config/
 docker tag bluegreen-demo-app:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/bluegreen-demo-app:latest
 docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/bluegreen-demo-app:latest
 ```
@@ -1176,6 +1298,14 @@ in the console.
 ---
 
 # Automated Teardown (CloudFormation)
+
+Unlike the manual teardown, you don't need separate steps for the
+CloudWatch log group or the task definition here — both are resources
+CloudFormation created as part of this stack (`EcsLogGroup` and
+`TaskDefinition`), so `delete-stack` removes them along with everything
+else. The task definition gets deregistered, not permanently deleted —
+if you want it fully gone rather than just inactive, that's an optional
+extra step at the end of this section.
 
 CloudFormation refuses to delete a couple of resource types if they still
 have content sitting in them. Handle these first, or `delete-stack` will
@@ -1249,3 +1379,80 @@ you expect.
   target group health checks alone
 - A longer bake time for anything handling real traffic, so there's more
   time to notice a problem before the old version terminates
+
+---
+
+## Troubleshooting: real errors people hit building this
+
+These are actual errors hit while building this project, kept here with
+their real fixes rather than buried in a changelog somewhere.
+
+**`permission denied while trying to connect to the Docker API at
+unix:///var/run/docker.sock`**
+Local machine issue, nothing to do with this project. Your user isn't in
+the `docker` group. Fix: `sudo usermod -aG docker $USER`, then fully log
+out and back in.
+
+**`$AWS_ACCOUNT_ID`, `$ECR_REPO_NAME`, `$CONTAINER_NAME` come back empty
+in the build**
+If you built the CodeBuild project by hand in the console, these have to
+be added manually as environment variables on the project — they don't
+exist by default. See Step 9. `$AWS_REGION` is the one exception: don't
+add it yourself, CodeBuild already provides it, and defining your own
+copy of it is what causes it to behave inconsistently.
+
+**Build fails trying to find a Dockerfile**
+The sample app file in this repo is named `Dockerfile` (not
+`Dockerfile.sample` — an earlier version of this project used that name
+and it broke `docker build .` in the buildspec, since Docker looks for a
+file literally named `Dockerfile` unless you pass `-f`). If you renamed
+or moved it, keep the plain name.
+
+**Build succeeds, `docker push` fails with a permission error**
+The CodeBuild service role doesn't have ECR push permissions by default
+when the console generates one for you — it only covers logging and
+basic artifact access. See the exact inline policy in Step 9. This is
+also already handled correctly in the CloudFormation template.
+
+**Task starts then dies:
+`ResourceInitializationError: unable to pull secrets or registry auth ...
+dial tcp ... i/o timeout`, sometimes followed by a longer version
+mentioning `GetAuthorizationToken` and an IP address timing out on port 443**
+This looks like it's about Secrets Manager or SSM Parameter Store — it
+isn't, at least not in this project, since nothing here uses either one.
+What's actually happening: the task is trying to reach ECR over HTTPS to
+authenticate and pull the image, and something is blocking that specific
+outbound connection. In every case this came up while building this
+project, the cause was the same: `bluegreen-demo-svc-sg`'s outbound rules
+had been narrowed down to only port 80 (some AWS accounts don't give new
+security groups an automatic allow-all outbound rule, so it's possible to
+end up here even without editing anything by hand). Fix: add an outbound
+rule allowing HTTPS (port 443) to `0.0.0.0/0` on that security group. See
+Step 4 — the CloudFormation template now sets this explicitly for exactly
+this reason.
+
+**Do I need to add CloudWatch Logs permissions to the task execution role?**
+No — `AmazonECSTaskExecutionRolePolicy` (the managed policy attached to
+`bluegreen-demo-task-exec-role`) already includes
+`logs:CreateLogStream` and `logs:PutLogEvents`, which is all a running
+task needs. The log group itself is created once, ahead of time — by
+CloudFormation as a stack resource in the automated version, or by the
+ECS console automatically when you configure logging during task
+definition creation in the manual version. If logs still aren't showing
+up, it's almost always the network issue above (the task never got far
+enough to start shipping logs), not a permissions gap on this role.
+
+**Optional: permanently delete task definition revisions, not just
+deregister them**
+
+```bash
+aws ecs list-task-definitions --family-prefix bluegreen-demo-task --status INACTIVE \
+  --query 'taskDefinitionArns' --output text | \
+  xargs -n1 aws ecs delete-task-definitions --task-definitions
+```
+
+A revision has to be deregistered (inactive) before this will work on it
+— `delete-stack` and the manual teardown steps above both deregister them
+as part of removing the `TaskDefinition` resource, but leave the actual
+permanent delete as this optional last step, since AWS keeps deregistered
+revisions around by default in case you want them back.

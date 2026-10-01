@@ -6,25 +6,23 @@ version: 0.2
 # image, registers a new task definition revision, and calls UpdateService.
 # ECS itself then handles the blue/green shift, because the service's
 # DeploymentConfiguration.Strategy is set to BLUE_GREEN.
+#
+# Note: this is simpler than the old CodeDeploy-based buildspec, which had
+# to generate taskdef.json and appspec.yaml as well — neither is needed
+# with native ECS blue/green.
 
 phases:
   pre_build:
     commands:
-      - echo Fetching AWS Environment Metadata...
-      - if [ -z "$AWS_ACCOUNT_ID" ]; then AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text); fi
-      - if [ -z "$AWS_REGION" ]; then AWS_REGION=$(aws configure get region); fi
-      
       - echo Logging in to ECR
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
-      # HARDCODED: Set your verified ECR repository path
-      - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/bluegreen-demo-app
+      - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME
 
   build:
     commands:
       - echo Building Docker image
-      - docker build -t $REPO_URI:$IMAGE_TAG -t $REPO_URI:latest ./pipeline-config
-
+      - docker build -t $REPO_URI:$IMAGE_TAG -t $REPO_URI:latest .
 
   post_build:
     commands:
@@ -32,8 +30,7 @@ phases:
       - docker push $REPO_URI:$IMAGE_TAG
       - docker push $REPO_URI:latest
       - echo Writing imagedefinitions.json for the CodePipeline ECS deploy action
-      # HARDCODED: Replaced $CONTAINER_NAME with 'bluegreen-demo-container'
-      - printf '[{"name":"bluegreen-demo-container","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $REPO_URI:$IMAGE_TAG > imagedefinitions.json
       - cat imagedefinitions.json
 
 artifacts:

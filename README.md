@@ -13,8 +13,11 @@ CodeDeploy application, deployment group, or `appspec.yaml` needed.
 
 **Read the full guide: [`guide.md`](./guide.md)** — it covers the
 introduction, architecture, a click-by-click walkthrough in the AWS
-Console, and the full CloudFormation template with deployment and
-teardown commands, all in one place.
+Console, the full CloudFormation template with deployment and teardown
+commands, and a troubleshooting section covering real errors hit while
+building this (Docker permission issues, missing CodeBuild environment
+variables, ECR push permissions, and the security group egress issue
+that causes `ResourceInitializationError` on task start).
 
 ## Why blue-green instead of a rolling update
 
@@ -39,7 +42,7 @@ switch — the old version never stopped running.
 └── pipeline-config/
     ├── buildspec.yml                           ← CodeBuild: builds image, pushes it,
     │                                              writes imagedefinitions.json
-    ├── Dockerfile.sample                        ← minimal placeholder app for testing the pipeline
+    ├── Dockerfile                        ← minimal placeholder app for testing the pipeline
     └── index.html                               ← placeholder app content
 ```
 
