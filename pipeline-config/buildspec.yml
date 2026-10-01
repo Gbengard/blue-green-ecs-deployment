@@ -36,4 +36,5 @@ phases:
 
 artifacts:
   files:
-    - pipeline/imagedefinitions.json
+    - 'pipeline-config/imagedefinitions.json'
+  discard-paths: yes
