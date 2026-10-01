@@ -22,6 +22,7 @@ phases:
   build:
     commands:
       - echo Building Docker image
+      - cd pipeline-config
       - docker build -t $REPO_URI:$IMAGE_TAG -t $REPO_URI:latest .
 
   post_build:
