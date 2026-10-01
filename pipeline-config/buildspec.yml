@@ -15,9 +15,9 @@ phases:
   pre_build:
     commands:
       - echo Logging in to ECR
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_://amazonaws.com
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
-      - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME
+      - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_://amazonaws.com/$ECR_REPO_NAME
 
   build:
     commands:
@@ -30,11 +30,11 @@ phases:
       - echo Pushing image to ECR
       - docker push $REPO_URI:$IMAGE_TAG
       - docker push $REPO_URI:latest
-      - echo Writing imagedefinitions.json for the CodePipeline ECS deploy action
-      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+      - echo Writing imagedefinitions.json to the repository root directory
+      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $REPO_URI:$IMAGE_TAG > ../imagedefinitions.json
+      - cd ..
       - cat imagedefinitions.json
 
 artifacts:
   files:
-    - 'pipeline-config/imagedefinitions.json'
-  discard-paths: yes
+    - 'imagedefinitions.json'
