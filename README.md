@@ -49,10 +49,12 @@ switch — the old version never stopped running.
 ## Before you clone this and start
 
 The pipeline pulls its source from GitHub, so it needs somewhere to pull
-from. Clone this repo, then push the contents of `pipeline-config/` into
-your own GitHub repo (on the branch you plan to use) before starting
-either the console or CloudFormation walkthrough. Without this, the
-pipeline's Source stage has nothing to work with.
+from. Clone this repo and push the **whole project as-is** to your own
+GitHub repo — keep `pipeline-config/` as a subfolder rather than
+flattening it into the root, since the buildspec and CodeBuild config
+both expect it to stay there. Do this before starting either the console
+or CloudFormation walkthrough — without it, the pipeline's Source stage
+has nothing to work with.
 
 ## Cost note
 

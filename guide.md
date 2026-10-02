@@ -8,15 +8,24 @@ monitoring catches it eventually, but "eventually" can be minutes of bad
 requests.
 
 Blue-green deployment fixes this differently. Instead of replacing the
-running app in place, you start the new version next to the old one, test
-it privately, and only send real traffic to it once you're sure it works.
-If something's wrong, you simply don't switch. The old version never
-stopped running, so nobody sees the broken version at all.
+running app in place, you start the new version next to the old one,
+check it privately, then move production traffic to it. The move itself
+isn't gradual and isn't gated on you doing anything — the moment the new
+version passes its health checks, ECS shifts all production traffic to it
+at once, automatically. What you actually get out of this setup is: a way
+to check the new version before it goes live if you're watching for it,
+and a fast, instant revert if it turns out to be broken, since the old
+version's tasks are deliberately kept running (receiving no traffic) for
+a few minutes afterward specifically so a rollback doesn't mean
+relaunching anything from scratch. It is not a safety gate that blocks a
+bad version from going live in the first place — by default, nothing
+does that here.
 
 In this guide, you'll build that setup on AWS: a container running on ECS
 Fargate, deployed through a pipeline that builds your code, ships it to a
-new set of tasks, tests it behind a private listener, then shifts
-production traffic over once it's confirmed healthy.
+new set of tasks, lets you check it privately behind a test rule, then
+automatically shifts all production traffic to it the moment it's healthy
+— not gradually, and not waiting for anyone to confirm anything.
 
 **A note on how this is built:** this guide uses Amazon ECS's own native
 blue/green deployment feature, not AWS CodeDeploy. Up until July 2025, ECS
@@ -93,14 +102,16 @@ You'll need:
   yourself before the pipeline takes over
 - A GitHub account and a repo the pipeline can pull from
 
-**Important — clone this repo first.** The pipeline needs two files
-sitting in your own GitHub repo before it can run: `buildspec.yml` (tells
-CodeBuild how to build and push the image) and `Dockerfile` plus
-`index.html` (a placeholder app so you have something to deploy while
-testing). Clone or download this project, then push the `pipeline-config`
-folder's contents into your own GitHub repo, on the branch you plan to
-use. Without this step, the pipeline's Source stage has nothing to pull,
-and everything after it will fail before it even starts.
+**Important — clone this repo first.** The pipeline needs the
+`pipeline-config/` folder — containing `buildspec.yml`, `Dockerfile`, and
+`index.html` — sitting in your own GitHub repo before it can run. Push
+the **whole cloned project as-is**, keeping `pipeline-config/` as a
+subfolder rather than flattening its contents into the repo root — Step 9
+points CodeBuild at `pipeline-config/buildspec.yml`, and the buildspec
+itself `cd`s into `pipeline-config/` to find the Dockerfile, so the
+folder needs to stay where it is. Without this step, the pipeline's
+Source stage has nothing to pull, and everything after it will fail
+before it even starts.
 
 Every resource in this guide has a fixed name, so it's easy to follow and
 easy to find again later. Keep this table open as you work through it.
@@ -320,7 +331,7 @@ the whole blue-green setup and worth showing clearly in your write-up.*
 ## Step 7 — IAM roles
 
 **IAM console** → left sidebar **Roles** → click **Create role**, for
-each of these four:
+each of these five:
 
 - **`bluegreen-demo-task-exec-role`** — Trusted entity type: **AWS
   service**, Use case: search for and select **Elastic Container Service
@@ -339,9 +350,76 @@ each of these four:
   name it, click **Create role**. (This role is new — it's what lets ECS
   itself flip the listener rule between blue and green during a
   deployment, replacing what CodeDeploy's role used to do.)
-- **`bluegreen-demo-codebuild-role`** — you'll create this one
-  automatically in Step 9 by letting the CodeBuild console generate it,
-  which is faster than building its policy by hand here
+- **`bluegreen-demo-codebuild-role`** — Trusted entity type: **AWS
+  service**, Use case: search for and select **CodeBuild** → click
+  **Next** → don't attach any managed policy on this screen, you'll add a
+  custom one in a moment → click **Next** → name it
+  `bluegreen-demo-codebuild-role` → click **Create role**
+
+Now attach the actual permissions this role needs, before you ever create
+the CodeBuild project — this is the fix for a very common failure where
+the pipeline builds fine but `docker push` fails at the Build stage,
+because the role CodeBuild auto-generates for you by default only covers
+logging and basic artifact access, not ECR. Doing it here, once, means
+you never have to come back and patch it later:
+
+1. Open `bluegreen-demo-codebuild-role` → **Add permissions → Create
+   inline policy**
+2. Switch to the **JSON** tab, delete the placeholder content, and paste this:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload"
+      ],
+      "Resource": "arn:aws:ecr:*:*:repository/bluegreen-demo-app"
+    }
+  ]
+}
+```
+
+3. Click **Next**, name the policy `bluegreen-demo-codebuild-inline`,
+   click **Create policy**
+
+The S3 permissions use `Resource: "*"` here rather than a specific bucket
+ARN, because the pipeline's artifact bucket doesn't exist yet — it gets
+created in Step 10. That's loose for a real production setup (worth
+tightening to the actual bucket ARN once you know it), fine for getting
+this working the first time.
 
 📸 *Screenshot worth taking: the "Elastic Container Service Task" use case
 selection screen for the first two roles — it's easy to accidentally pick
@@ -388,7 +466,11 @@ the wrong ECS-related option here.*
     created in Step 6) — until you've created and picked this, the
     console will refuse to let you select a green target group at all
 29. Infrastructure role: `bluegreen-demo-ecs-infra-role`
-30. Leave bake time at its default (or set 5 minutes)
+30. Bake time: AWS defaults this to 15 minutes, which makes iterating on
+    a test setup painfully slow. Set it to something short like 3 minutes
+    for now — see the note right after Step 11 for exactly what this
+    setting does and doesn't control before you assume a short bake time
+    is unsafe
 31. Click **Create**
 
 📸 *Screenshot worth taking: the "Deployment strategy" dropdown on the
@@ -442,14 +524,18 @@ problems from here on are isolated to the pipeline you're about to build.
 9. Image: use the latest available standard image
 10. Turn on **Privileged** — required, since building a Docker image
     inside CodeBuild needs this
-11. Service role: **New service role**, name it
-    `bluegreen-demo-codebuild-role`
+11. Service role: **Existing service role** → select
+    `bluegreen-demo-codebuild-role` (the one you built with full
+    permissions back in Step 7 — no need to create a new one here, and
+    nothing to patch afterward)
 12. Expand **Additional configuration**, scroll to **Environment
-    variables**, and add these three — the buildspec reads them and the
-    build fails with "unbound variable" style errors without them (a
-    fourth, `AWS_REGION`, doesn't need adding — CodeBuild provides it
-    automatically, and defining your own copy of it is what was likely
-    causing that specific error):
+    variables**, and add these four — the buildspec reads them and the
+    build fails (or silently builds a malformed ECR URL) without them:
+    - `AWS_REGION` = your region, e.g. `us-east-1`. CodeBuild is supposed
+      to provide this automatically as a built-in variable, but in
+      practice it didn't always resolve reliably inside the buildspec's
+      shell commands — setting it explicitly here removes the ambiguity
+      and is cheap insurance against a hard-to-diagnose malformed-URL error
     - `AWS_ACCOUNT_ID` = your 12-digit account ID (run
       `aws sts get-caller-identity --query Account --output text` if you
       don't have it memorized)
@@ -458,40 +544,9 @@ problems from here on are isolated to the pipeline you're about to build.
 13. Buildspec: choose **Use a buildspec file**, path
     `pipeline-config/buildspec.yml`
 14. Click **Create build project**
-15. **Immediately go fix the service role's permissions** — this is not
-    optional, and it's the single most common reason the pipeline fails
-    at the Build stage with a permission error during `docker push`.
-    The role CodeBuild just generated only covers logging and basic S3
-    artifact access, not ECR. Go to **IAM console → Roles →
-    bluegreen-demo-codebuild-role → Add permissions → Create inline
-    policy**, switch to the **JSON** tab, paste this, then name and save it:
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": "ecr:GetAuthorizationToken",
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:BatchGetImage",
-        "ecr:PutImage",
-        "ecr:InitiateLayerUpload",
-        "ecr:UploadLayerPart",
-        "ecr:CompleteLayerUpload"
-      ],
-      "Resource": "arn:aws:ecr:*:*:repository/bluegreen-demo-app"
-    }
-  ]
-}
-```
-
+That's it — since the role already has everything it needs from Step 7,
+there's nothing left to go back and fix after this.
 
 ## Step 10 — CodePipeline
 
@@ -534,6 +589,60 @@ show them what it looks like.*
 6. For a stronger test, open a terminal and run a loop hitting the URL
    once a second while the deploy runs — watch that it never returns an
    error, the whole way through the swap
+
+### What bake time actually controls (it's not what it sounds like)
+
+If you tested this and noticed the green version was reachable via the
+test header *before* bake time finished, and stayed reachable for a
+while *after* the deployment completed too — that's correct behavior,
+not a bug. It's worth understanding exactly what's happening, because
+"bake time" sounds like it should delay something, and it does, just not
+the thing you'd guess.
+
+The deployment actually happens in this order:
+
+1. New (green) tasks launch and register to the alternate target group
+2. As soon as they pass health checks, the **test rule** can reach them —
+   immediately, with no delay. This is intentional: the entire point of
+   the test rule is to let you validate the new version *before* real
+   traffic hits it, so of course it has to be reachable right away
+3. Once ECS considers the new version healthy, the **production rule**
+   shifts over to it — this also happens without waiting for bake time.
+   Bake time hasn't started yet at this point
+4. **Only now does bake time begin** — and all it does is keep the old
+   (blue) tasks running for that long, as a fast-rollback safety net,
+   before finally terminating them
+
+So bake time never gates when the new version becomes reachable (via the
+test rule) or when it goes live (via the production rule) — it only
+controls how long the *old* version sticks around afterward in case
+something needs to roll back quickly. A 3-minute bake time and a
+15-minute one behave identically for how fast your change goes live; the
+difference only shows up if something goes wrong shortly after cutover.
+
+**Is traffic ever split between blue and green while this is happening?
+No — not with this project's setup.** ECS actually offers three different
+deployment strategies: `BLUE_GREEN`, `LINEAR`, and `CANARY`. Only
+`LINEAR` and `CANARY` shift traffic by percentage (for example, `CANARY`
+sends 10% of real traffic to green, waits, then shifts the remaining 90%
+all at once; `LINEAR` moves it in equal steps over time). Plain
+`BLUE_GREEN` — what this project's `DeploymentConfiguration.Strategy` is
+actually set to — does none of that. It's a single atomic switch: one
+moment production is 100% on blue, the instant green passes its health
+checks production becomes 100% on green. There's no window where real
+users are being split between old and new. If you specifically want
+gradual, percentage-based exposure to real traffic — not just the private
+test-header path — that's a different strategy (`LINEAR` or `CANARY`),
+not something this `BLUE_GREEN` setup does.
+
+If you want validation to actually gate the production cutover — so a
+bad green deployment never goes live at all, rather than rolling back
+quickly after it already has — that needs something extra: either a
+CloudWatch alarm attached to the deployment configuration (ECS watches it
+and automatically rolls back if it fires during bake time) or a Lambda
+lifecycle hook that runs before traffic shifts and can fail the
+deployment outright. Neither is set up in this project; it's listed under
+"What I'd change for a production version" at the end of this guide.
 
 ## Step 12 — Roll back on purpose
 
@@ -1227,8 +1336,14 @@ aws cloudformation create-stack \
       ParameterKey=ProjectName,ParameterValue=bluegreen-demo \
       ParameterKey=GitHubRepoOwner,ParameterValue=<your-github-username> \
       ParameterKey=GitHubRepoName,ParameterValue=<your-repo-name> \
-      ParameterKey=GitHubBranch,ParameterValue=main
+      ParameterKey=GitHubBranch,ParameterValue=main \
+      ParameterKey=BakeTimeMinutes,ParameterValue=3
 ```
+
+`BakeTimeMinutes` defaults to 3 if you omit it — AWS's own default is 15,
+which is a long wait while you're iterating on getting this working. See
+the note after Step 11 in the console section for exactly what bake time
+does and doesn't control.
 
 3. Watch it create — either in the **CloudFormation console** (open the
    stack, click the **Events** tab, and refresh), or by running:
@@ -1377,6 +1492,9 @@ you expect.
 - Lifecycle hooks (Lambda functions ECS can call before/after each stage
   of the traffic shift) for custom validation, instead of relying on
   target group health checks alone
+- A CloudWatch alarm attached to the deployment configuration, so a spike
+  in errors during bake time triggers an automatic rollback — right now
+  nothing but target group health checks gates the cutover itself
 - A longer bake time for anything handling real traffic, so there's more
   time to notice a problem before the old version terminates
 
@@ -1397,22 +1515,55 @@ out and back in.
 in the build**
 If you built the CodeBuild project by hand in the console, these have to
 be added manually as environment variables on the project — they don't
-exist by default. See Step 9. `$AWS_REGION` is the one exception: don't
-add it yourself, CodeBuild already provides it, and defining your own
-copy of it is what causes it to behave inconsistently.
+exist by default. See Step 9, which now includes `AWS_REGION` too — it's
+technically a CodeBuild built-in, but it didn't reliably resolve in
+practice, so it's set explicitly here rather than assumed.
 
-**Build fails trying to find a Dockerfile**
-The sample app file in this repo is named `Dockerfile` (not
-`Dockerfile.sample` — an earlier version of this project used that name
-and it broke `docker build .` in the buildspec, since Docker looks for a
-file literally named `Dockerfile` unless you pass `-f`). If you renamed
-or moved it, keep the plain name.
+**ECR login or push fails with a malformed URL (something like
+`....dkr.ecr..amazonaws.com` with a missing region segment, or a stray
+`://`)**
+This is `$AWS_REGION` being empty at the point the buildspec builds the
+registry URL string — the variable substitution doesn't fail loudly, it
+just silently produces a broken URL. Fix: make sure `AWS_REGION` is set
+as an explicit environment variable on the CodeBuild project (Step 9),
+not left to CodeBuild's built-in one.
+
+**Build fails trying to find a Dockerfile, or `index.html` isn't found**
+Two separate things can cause this, check both:
+1. The sample app file in this repo is named `Dockerfile` (not
+   `Dockerfile.sample` — an earlier version of this project used that
+   name and it broke `docker build .`, since Docker looks for a file
+   literally named `Dockerfile` unless you pass `-f`)
+2. The buildspec needs to actually be looking in the right folder. This
+   project keeps `pipeline-config/` as a subfolder in the repo rather
+   than flattening it to the root (see Prerequisites), and the buildspec
+   `cd`s into `pipeline-config` before running `docker build .` — if
+   you'd flattened the repo instead, or edited the buildspec without
+   keeping that `cd` in place, the build looks in the wrong directory
+   and can't find either file
+
+**CodePipeline's Deploy stage fails saying it can't find
+`imagedefinitions.json`**
+The buildspec builds the Docker image from inside `pipeline-config/`, but
+CodePipeline's Deploy stage expects `imagedefinitions.json` at the repo
+root, not buried in that subfolder. The buildspec handles this by `cd`ing
+back to `$CODEBUILD_SRC_DIR` (the repo root) before writing the file — if
+that line gets removed or the file ends up written while still inside
+`pipeline-config/`, the artifact step silently packages the wrong path
+and the Deploy stage can't find it.
 
 **Build succeeds, `docker push` fails with a permission error**
-The CodeBuild service role doesn't have ECR push permissions by default
-when the console generates one for you — it only covers logging and
-basic artifact access. See the exact inline policy in Step 9. This is
-also already handled correctly in the CloudFormation template.
+This happens when the CodeBuild service role only has logging and basic
+artifact access, not ECR — which is exactly what you get if you let the
+console auto-generate a role for you when creating the project. This
+guide avoids that: Step 7 has you build `bluegreen-demo-codebuild-role`
+with the full policy attached before the CodeBuild project exists, and
+Step 9 just selects it as an existing role. If you're hitting this error,
+check that the role actually has the inline policy from Step 7 attached —
+it's possible to have skipped that, or to have let CodeBuild generate its
+own role by choosing "New service role" in Step 9 instead of "Existing
+service role." This is also already handled correctly in the
+CloudFormation template.
 
 **Task starts then dies:
 `ResourceInitializationError: unable to pull secrets or registry auth ...
