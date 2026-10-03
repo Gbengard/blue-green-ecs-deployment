@@ -44,6 +44,38 @@ Parameters:
       once this is handling anything real, so there's more time to catch
       a problem before the old version is gone for good.
 
+  EnableManualApproval:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      If true, adds a PAUSE lifecycle hook at PRE_PRODUCTION_TRAFFIC_SHIFT.
+      Unlike bake time (which only runs after cutover), this actually
+      gates the production traffic shift — the deployment stops and waits
+      for a human to approve it, with green reachable via the test header
+      the whole time it's waiting. No Lambda or extra IAM role is needed
+      for this — PAUSE hooks are a plain ECS/ALB-level feature.
+
+  ApprovalTimeoutMinutes:
+    Type: Number
+    Default: 60
+    Description: >
+      How long the deployment waits for approval before taking the
+      timeout action below automatically. Max allowed by ECS is 20160
+      (14 days).
+
+  ApprovalTimeoutAction:
+    Type: String
+    Default: ROLLBACK
+    AllowedValues: ["ROLLBACK", "CONTINUE"]
+    Description: >
+      What happens if nobody approves within ApprovalTimeoutMinutes.
+      ROLLBACK (AWS's own default) means an unattended deployment reverts
+      safely rather than quietly going live — recommended over CONTINUE
+      for exactly that reason.
+
+Conditions:
+  UseManualApproval: !Equals [!Ref EnableManualApproval, "true"]
 
 Resources:
 
@@ -382,6 +414,15 @@ Resources:
         BakeTimeInMinutes: !Ref BakeTimeMinutes
         MaximumPercent: 200
         MinimumHealthyPercent: 100
+        LifecycleHooks: !If
+          - UseManualApproval
+          - - LifecycleStages:
+                - PRE_PRODUCTION_TRAFFIC_SHIFT
+              TargetType: PAUSE
+              TimeoutConfiguration:
+                TimeoutInMinutes: !Ref ApprovalTimeoutMinutes
+                Action: !Ref ApprovalTimeoutAction
+          - !Ref AWS::NoValue
 
   ##########################################################################
   # CODEBUILD

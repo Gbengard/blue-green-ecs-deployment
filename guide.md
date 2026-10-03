@@ -8,24 +8,24 @@ monitoring catches it eventually, but "eventually" can be minutes of bad
 requests.
 
 Blue-green deployment fixes this differently. Instead of replacing the
-running app in place, you start the new version next to the old one,
-check it privately, then move production traffic to it. The move itself
-isn't gradual and isn't gated on you doing anything — the moment the new
-version passes its health checks, ECS shifts all production traffic to it
-at once, automatically. What you actually get out of this setup is: a way
-to check the new version before it goes live if you're watching for it,
-and a fast, instant revert if it turns out to be broken, since the old
-version's tasks are deliberately kept running (receiving no traffic) for
-a few minutes afterward specifically so a rollback doesn't mean
-relaunching anything from scratch. It is not a safety gate that blocks a
-bad version from going live in the first place — by default, nothing
-does that here.
+running app in place, you start the new version next to the old one and
+check it privately before anyone else sees it. On its own, ECS's blue/green
+feature doesn't actually wait for you to do that checking — the moment
+the new version passes its health checks, it shifts all production
+traffic over automatically, whether or not anyone looked at it first.
+What turns "check it privately" into an actual gate — a real point where
+nothing goes live until you say so — is one more piece this guide adds on
+top: a manual approval step. With it in place, the deployment stops right
+after the new version is reachable for checking, and waits for you to
+approve it before a single real user sees it. If it looks wrong, you
+reject it instead, and the new version never goes live at all.
 
 In this guide, you'll build that setup on AWS: a container running on ECS
 Fargate, deployed through a pipeline that builds your code, ships it to a
-new set of tasks, lets you check it privately behind a test rule, then
-automatically shifts all production traffic to it the moment it's healthy
-— not gradually, and not waiting for anyone to confirm anything.
+new set of tasks, lets you check it privately behind a test rule, pauses
+there waiting for your approval, and only then shifts production traffic
+over — plus, once it's live, keeps the old version standing by for a few
+minutes in case you need to revert instantly.
 
 **A note on how this is built:** this guide uses Amazon ECS's own native
 blue/green deployment feature, not AWS CodeDeploy. Up until July 2025, ECS
@@ -64,6 +64,12 @@ CodePipeline
                             ▼
               ECS itself runs the blue/green shift
               (DeploymentConfiguration.Strategy = BLUE_GREEN)
+                            │
+                            ▼
+              New tasks pass health checks, test
+              traffic can reach them — then ECS
+              PAUSES at PRE_PRODUCTION_TRAFFIC_SHIFT
+              and waits for a human to click Continue
                             │
                             ▼
                     Application Load Balancer
@@ -471,7 +477,20 @@ the wrong ECS-related option here.*
     for now — see the note right after Step 11 for exactly what this
     setting does and doesn't control before you assume a short bake time
     is unsafe
-31. Click **Create**
+31. Still in **Deployment configuration**, find **Deployment lifecycle
+    hooks** → click **Add**. This is the part that actually gates
+    production cutover — unlike everything above it, which just
+    configures *how* the shift happens, not *whether* it's allowed to
+    happen without anyone checking first
+32. Choose hook type **Pause**
+33. Lifecycle stages: select **PRE_PRODUCTION_TRAFFIC_SHIFT** — this
+    pauses right after green has already received test traffic, but
+    before it gets anything real
+34. Set a timeout — 60 minutes is reasonable for testing. Leave the
+    timeout action as **Roll back** (the default): if you forget to
+    approve it, an unattended deployment should fail safe and revert,
+    not quietly go live on its own
+35. Click **Create**
 
 📸 *Screenshot worth taking: the "Deployment strategy" dropdown on the
 service creation screen showing Blue/green selected, and the Load
@@ -578,26 +597,37 @@ show them what it looks like.*
 
 1. Push a small change to your GitHub repo (edit the text in `index.html`)
 2. Watch the pipeline run in the CodePipeline console
-3. Open the ECS service → **Deployments** tab to watch the blue/green
-   shift happen in real time
-4. While it's running, hit the same load balancer URL but with the test
-   header set — a browser can't add custom headers easily, so use curl:
+3. Open the ECS service → deployment timeline to watch it progress
+   through each phase in real time
+4. While it's in **Scaling up green tasks** or **Test traffic shift**, hit
+   the load balancer URL with the test header set — a browser can't add
+   custom headers easily, so use curl:
    `curl -H "X-Bg-Test: true" http://<alb-dns-name>/` — you should see the
    new version there, before it's live
-5. Once the deploy finishes, refresh the load balancer's DNS name normally
-   (no header) — it should now show the new version
-6. For a stronger test, open a terminal and run a loop hitting the URL
-   once a second while the deploy runs — watch that it never returns an
-   error, the whole way through the swap
+5. The deployment should now stop at **Test traffic shift**, showing
+   status **Awaiting action** — this is the pause hook from Step 8
+   working. At this point: real traffic is still on the old version,
+   confirm that with a plain `curl http://<alb-dns-name>/` (no header) —
+   it should still show the old version
+6. Once you're satisfied the new version looks right, click **Take
+   Action** → **Continue** to let it proceed to **Production traffic
+   shift**. (Or click **Roll back** instead, to see what happens when you
+   reject a deployment outright — the new tasks never get production
+   traffic at all)
+7. Once it continues, refresh the load balancer's DNS name normally (no
+   header) — it should now show the new version
+8. For a stronger test, open a terminal and run a loop hitting the URL
+   once a second from before you click Continue through to deployment
+   complete — watch that it never returns an error, the whole way through
+   the swap
 
 ### What bake time actually controls (it's not what it sounds like)
 
-If you tested this and noticed the green version was reachable via the
-test header *before* bake time finished, and stayed reachable for a
-while *after* the deployment completed too — that's correct behavior,
-not a bug. It's worth understanding exactly what's happening, because
-"bake time" sounds like it should delay something, and it does, just not
-the thing you'd guess.
+It's worth understanding exactly what bake time does and doesn't control,
+because the name suggests it should delay something, and it does, just
+not the thing you'd guess — and it's easy to conflate it with the manual
+approval gate from Step 8, which is a genuinely different mechanism doing
+a genuinely different job.
 
 The deployment actually happens in this order:
 
@@ -606,19 +636,28 @@ The deployment actually happens in this order:
    immediately, with no delay. This is intentional: the entire point of
    the test rule is to let you validate the new version *before* real
    traffic hits it, so of course it has to be reachable right away
-3. Once ECS considers the new version healthy, the **production rule**
-   shifts over to it — this also happens without waiting for bake time.
-   Bake time hasn't started yet at this point
-4. **Only now does bake time begin** — and all it does is keep the old
+3. **This is where the manual approval hook (Step 8) actually stops
+   things** — the deployment pauses here, at `PRE_PRODUCTION_TRAFFIC_SHIFT`,
+   and waits for you to click Continue. This is the one genuine gate in
+   the whole sequence: nothing proceeds past this point without it
+4. Once approved, the **production rule** shifts over to green
+5. **Only now does bake time begin** — and all it does is keep the old
    (blue) tasks running for that long, as a fast-rollback safety net,
    before finally terminating them
 
-So bake time never gates when the new version becomes reachable (via the
-test rule) or when it goes live (via the production rule) — it only
-controls how long the *old* version sticks around afterward in case
-something needs to roll back quickly. A 3-minute bake time and a
-15-minute one behave identically for how fast your change goes live; the
-difference only shows up if something goes wrong shortly after cutover.
+So bake time and the approval hook are doing two different jobs, on two
+different sides of the same moment: the approval hook gates *whether and
+when* cutover happens at all; bake time only controls how long the *old*
+version sticks around *after* cutover, in case something needs to roll
+back quickly. A 3-minute bake time and a 15-minute one behave identically
+for how fast your change goes live once approved; the difference only
+shows up if something goes wrong shortly after cutover.
+
+If you'd set `EnableManualApproval` to `false` (dropping the hook
+entirely), step 3 above wouldn't exist — the production shift would
+happen automatically the moment green is healthy, with nothing gating it
+at all. That was this project's original behavior, and it's still what
+you get if you turn the hook off.
 
 **Is traffic ever split between blue and green while this is happening?
 No — not with this project's setup.** ECS actually offers three different
@@ -635,14 +674,15 @@ gradual, percentage-based exposure to real traffic — not just the private
 test-header path — that's a different strategy (`LINEAR` or `CANARY`),
 not something this `BLUE_GREEN` setup does.
 
-If you want validation to actually gate the production cutover — so a
-bad green deployment never goes live at all, rather than rolling back
-quickly after it already has — that needs something extra: either a
-CloudWatch alarm attached to the deployment configuration (ECS watches it
-and automatically rolls back if it fires during bake time) or a Lambda
-lifecycle hook that runs before traffic shifts and can fail the
-deployment outright. Neither is set up in this project; it's listed under
-"What I'd change for a production version" at the end of this guide.
+This project *does* now gate the cutover — that's exactly what the
+manual approval hook from Step 8 is for, and it's covered in detail in
+the "What bake time actually controls" section above. What's still
+missing, if you want a bad deployment to be rejected *automatically*
+rather than relying on a human to notice and click Reject, is a
+CloudWatch alarm attached to the deployment configuration — ECS would
+watch it and auto-rollback if it fires. That's not set up here; it's
+listed under "What I'd change for a production version" at the end of
+this guide.
 
 ## Step 12 — Roll back on purpose
 
@@ -1337,13 +1377,23 @@ aws cloudformation create-stack \
       ParameterKey=GitHubRepoOwner,ParameterValue=<your-github-username> \
       ParameterKey=GitHubRepoName,ParameterValue=<your-repo-name> \
       ParameterKey=GitHubBranch,ParameterValue=main \
-      ParameterKey=BakeTimeMinutes,ParameterValue=3
+      ParameterKey=BakeTimeMinutes,ParameterValue=3 \
+      ParameterKey=EnableManualApproval,ParameterValue=true \
+      ParameterKey=ApprovalTimeoutMinutes,ParameterValue=60 \
+      ParameterKey=ApprovalTimeoutAction,ParameterValue=ROLLBACK
 ```
 
-`BakeTimeMinutes` defaults to 3 if you omit it — AWS's own default is 15,
-which is a long wait while you're iterating on getting this working. See
-the note after Step 11 in the console section for exactly what bake time
-does and doesn't control.
+All four of these can be omitted and default to the values shown.
+`BakeTimeMinutes` defaults to 3 — AWS's own default is 15, a long wait
+while you're iterating. `EnableManualApproval` defaults to `true`, adding
+a `PAUSE` hook at `PRE_PRODUCTION_TRAFFIC_SHIFT` — no Lambda or extra IAM
+role needed, it's a plain ECS feature. Set it to `false` if you'd rather
+the deployment shift to production automatically the moment green is
+healthy, with nothing waiting on anyone. `ApprovalTimeoutAction` defaults
+to `ROLLBACK`, meaning a deployment nobody approves in time reverts
+safely rather than quietly going live. See the note after Step 11 in the
+console section for exactly how this hook and bake time relate to each
+other — they gate two different moments, not the same one.
 
 3. Watch it create — either in the **CloudFormation console** (open the
    stack, click the **Events** tab, and refresh), or by running:
@@ -1489,12 +1539,18 @@ you expect.
 - Tighter IAM policies — the CodeBuild and CodePipeline roles here are
   broader than they'd need to be in a real setup
 - HTTPS on the load balancer with a real certificate, not plain HTTP
-- Lifecycle hooks (Lambda functions ECS can call before/after each stage
-  of the traffic shift) for custom validation, instead of relying on
-  target group health checks alone
 - A CloudWatch alarm attached to the deployment configuration, so a spike
   in errors during bake time triggers an automatic rollback — right now
-  nothing but target group health checks gates the cutover itself
+  the manual approval hook gates the *initial* cutover, but once bake
+  time starts, nothing but target group health checks is watching for
+  problems
+- A Lambda-type lifecycle hook running an actual automated check (hit a
+  `/health` endpoint, check a key metric) at `PRE_PRODUCTION_TRAFFIC_SHIFT`
+  instead of — or alongside — a human manually deciding. The manual
+  approval hook built here is a real gate, but it's only as good as
+  whoever's watching for the Awaiting Action status; a real production
+  setup likely wants both an automated check and a human able to
+  override it
 - A longer bake time for anything handling real traffic, so there's more
   time to notice a problem before the old version terminates
 
