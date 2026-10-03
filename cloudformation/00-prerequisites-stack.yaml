@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Prerequisites for the blue-green ECS deployment stack: an ECR repository
+  and a CodeStar GitHub connection. Deploy this FIRST, do the two manual
+  steps against it (authorize the connection, push an initial image), and
+  only then deploy blue-green-ecs-stack.yaml. Splitting these out means
+  the ECS service and the pipeline in the main stack never start before
+  there's an image to pull or an authorized source to pull from — both of
+  which otherwise fail with confusing-looking errors that are really just
+  expected sequencing, not bugs.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: bluegreen-demo
+    Description: Short name used to prefix resources. Must match the value you pass to the main stack.
+
+Resources:
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-app"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # Created here, but still needs a manual click to authorize — see the
+  # guide. That's a deliberate AWS security control, not something any
+  # template (this one included) can script around.
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Sub "${ProjectName}-github-connection"
+      ProviderType: GitHub
+
+Outputs:
+  EcrRepositoryName:
+    Description: Pass this into the main stack's EcrRepositoryName parameter.
+    Value: !Ref EcrRepository
+
+  EcrRepositoryUri:
+    Description: Push your initial image here before deploying the main stack.
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}"
+
+  GitHubConnectionArn:
+    Description: >
+      Authorize this in the console (Developer Tools > Settings >
+      Connections) before deploying the main stack, then pass this value
+      into the main stack's GitHubConnectionArn parameter.
+    Value: !Ref GitHubConnection

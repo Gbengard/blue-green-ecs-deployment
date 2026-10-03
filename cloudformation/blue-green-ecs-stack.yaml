@@ -4,16 +4,31 @@ Description: >
   using CodePipeline, CodeBuild, and Amazon ECS's native blue/green
   deployment strategy (no AWS CodeDeploy required — this replaced the
   CodeDeploy-based approach in July 2025).
-  Two manual steps are still required after this stack is created — see
-  the README and guide.md in this repo: (1) authorize the CodeStar GitHub
-  connection in the console, (2) push an initial image to ECR before the
-  first deployment.
+  Deploy cloudformation/00-prerequisites-stack.yaml FIRST, do the two
+  manual steps it requires (authorize the GitHub connection, push an
+  initial image to ECR), and only then deploy this stack — see guide.md.
+  This stack's ECS service and pipeline both start immediately on
+  creation, so if the image or the authorized connection don't already
+  exist, you'll hit avoidable failures.
 
 Parameters:
   ProjectName:
     Type: String
     Default: bluegreen-demo
-    Description: Short name used to prefix resources.
+    Description: Short name used to prefix resources. Should match what you used for the prerequisites stack.
+
+  EcrRepositoryName:
+    Type: String
+    Description: >
+      Name of the ECR repository created by the prerequisites stack
+      (its EcrRepositoryName output) — not created here.
+
+  GitHubConnectionArn:
+    Type: String
+    Description: >
+      ARN of the CodeStar connection created and authorized via the
+      prerequisites stack (its GitHubConnectionArn output) — not created
+      here, and must already be authorized before this stack is deployed.
 
   ContainerPort:
     Type: Number
@@ -295,15 +310,9 @@ Resources:
           TargetGroupArn: !Ref BlueTargetGroup
 
   ##########################################################################
-  # ECR + ECS
+  # ECS (the ECR repo itself lives in the prerequisites stack — this one
+  # just references it by name via the EcrRepositoryName parameter)
   ##########################################################################
-
-  EcrRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub "${ProjectName}-app"
-      ImageScanningConfiguration:
-        ScanOnPush: true
 
   EcsCluster:
     Type: AWS::ECS::Cluster
@@ -368,10 +377,11 @@ Resources:
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: !Sub "${ProjectName}-container"
-          # Placeholder image — CodeBuild will push real images to this repo
-          # on each pipeline run. A valid image must exist in ECR before the
-          # ECS service below can start (see guide.md).
-          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-app:latest"
+          # CodeBuild pushes real images to this repo on each pipeline run.
+          # A valid image must already exist (pushed as part of the
+          # prerequisites stack's manual steps) before this service can
+          # start — see guide.md.
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}:latest"
           PortMappings:
             - ContainerPort: !Ref ContainerPort
           LogConfiguration:
@@ -469,7 +479,9 @@ Resources:
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
-                Resource: !GetAtt EcrRepository.Arn
+                # Constructed, not !GetAtt — the repo is a parameter here,
+                # not a resource this stack created.
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -503,7 +515,7 @@ Resources:
           - Name: AWS_ACCOUNT_ID
             Value: !Ref AWS::AccountId
           - Name: ECR_REPO_NAME
-            Value: !Sub "${ProjectName}-app"
+            Value: !Ref EcrRepositoryName
           - Name: CONTAINER_NAME
             Value: !Sub "${ProjectName}-container"
       Source:
@@ -520,14 +532,6 @@ Resources:
       BucketName: !Sub "${ProjectName}-pipeline-artifacts-${AWS::AccountId}"
       VersioningConfiguration:
         Status: Enabled
-
-  # GitHub connection — created here, but must be manually authorized once
-  # in the console after this stack is created. See guide.md.
-  GitHubConnection:
-    Type: AWS::CodeStarConnections::Connection
-    Properties:
-      ConnectionName: !Sub "${ProjectName}-github-connection"
-      ProviderType: GitHub
 
   CodePipelineServiceRole:
     Type: AWS::IAM::Role
@@ -556,7 +560,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
-                Resource: !Ref GitHubConnection
+                Resource: !Ref GitHubConnectionArn
               - Effect: Allow
                 Action:
                   - codebuild:BatchGetBuilds
@@ -594,7 +598,7 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: "1"
               Configuration:
-                ConnectionArn: !Ref GitHubConnection
+                ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Sub "${GitHubRepoOwner}/${GitHubRepoName}"
                 BranchName: !Ref GitHubBranch
               OutputArtifacts:
@@ -648,15 +652,8 @@ Outputs:
     Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
 
   EcrRepositoryUri:
-    Description: Push your Docker images here
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-app"
-
-  GitHubConnectionArn:
-    Description: >
-      Go to Developer Tools > Settings > Connections in the console and click
-      "Update pending connection" to authorize this — CloudFormation cannot
-      do this step for you.
-    Value: !Ref GitHubConnection
+    Description: Where this stack's pipeline pushes images (created by the prerequisites stack)
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}"
 
   PipelineName:
     Value: !Ref Pipeline
