@@ -190,7 +190,7 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-          Description: HTTPS out — required to reach ECR, CloudWatch Logs, and STS
+          Description: HTTPS out - required to reach ECR, CloudWatch Logs, and STS
 
   ##########################################################################
   # LOAD BALANCER — blue (primary) + green (alternate) target groups,
