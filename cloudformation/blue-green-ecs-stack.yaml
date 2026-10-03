@@ -201,6 +201,12 @@ Resources:
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    # Explicit dependency, not implicit: this resource only references
+    # subnets and a security group, so CloudFormation has no natural
+    # reason to wait for the Internet Gateway to actually be attached to
+    # the VPC first — without this, ALB creation can race the attachment
+    # and fail with "VPC has no internet gateway" roughly half the time.
+    DependsOn: AttachGateway
     Properties:
       Name: !Sub "${ProjectName}-alb"
       Subnets:
