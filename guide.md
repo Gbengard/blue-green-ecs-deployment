@@ -755,18 +755,31 @@ clear error.
 
 # Automated Approach (CloudFormation)
 
-Same architecture as above, defined as one template — including ECS's
-native blue/green deployment strategy, not CodeDeploy. If you went
-through the console steps first, most of this will look familiar.
+Same architecture as above — including ECS's native blue/green
+deployment strategy, not CodeDeploy — but split across **two** templates
+instead of one, specifically so the two manual steps (authorizing the
+GitHub connection, pushing the first image) can happen *before* anything
+that depends on them starts running:
+
+- **`cloudformation/00-prerequisites-stack.yaml`** — just the ECR repo
+  and the GitHub connection. Deploy this first.
+- **`cloudformation/blue-green-ecs-stack.yaml`** — everything else (VPC,
+  ALB, ECS service, pipeline). Deploy this second, pointing it at the
+  prerequisites stack's outputs.
+
+If you went through the console steps first, most of this will look
+familiar — it's the same resources, just as code.
 
 Reminder from the Prerequisites section: you still need the
-`pipeline-config` files pushed to your own GitHub repo before this stack
-will fully work, since the pipeline pulls its source from there.
+`pipeline-config` files pushed to your own GitHub repo before the
+pipeline will fully work, since it pulls its source from there.
 
-## Full template
+## Full template (main stack)
 
 Save this as `cloudformation/blue-green-ecs-stack.yaml` (it's already in
-this repo at that path if you cloned it).
+this repo at that path if you cloned it). The prerequisites template is
+short enough to just open directly —
+`cloudformation/00-prerequisites-stack.yaml` in this repo.
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -775,16 +788,31 @@ Description: >
   using CodePipeline, CodeBuild, and Amazon ECS's native blue/green
   deployment strategy (no AWS CodeDeploy required — this replaced the
   CodeDeploy-based approach in July 2025).
-  Two manual steps are still required after this stack is created — see
-  the README and guide.md in this repo: (1) authorize the CodeStar GitHub
-  connection in the console, (2) push an initial image to ECR before the
-  first deployment.
+  Deploy cloudformation/00-prerequisites-stack.yaml FIRST, do the two
+  manual steps it requires (authorize the GitHub connection, push an
+  initial image to ECR), and only then deploy this stack — see guide.md.
+  This stack's ECS service and pipeline both start immediately on
+  creation, so if the image or the authorized connection don't already
+  exist, you'll hit avoidable failures.
 
 Parameters:
   ProjectName:
     Type: String
     Default: bluegreen-demo
-    Description: Short name used to prefix resources.
+    Description: Short name used to prefix resources. Should match what you used for the prerequisites stack.
+
+  EcrRepositoryName:
+    Type: String
+    Description: >
+      Name of the ECR repository created by the prerequisites stack
+      (its EcrRepositoryName output) — not created here.
+
+  GitHubConnectionArn:
+    Type: String
+    Description: >
+      ARN of the CodeStar connection created and authorized via the
+      prerequisites stack (its GitHubConnectionArn output) — not created
+      here, and must already be authorized before this stack is deployed.
 
   ContainerPort:
     Type: Number
@@ -803,6 +831,50 @@ Parameters:
     Type: String
     Default: main
     Description: Branch CodePipeline should watch.
+
+  BakeTimeMinutes:
+    Type: Number
+    Default: 3
+    Description: >
+      Minutes the old (blue) tasks are kept running after production
+      traffic cuts over to the new version, in case a rollback is needed.
+      AWS's own default is 15 — set lower here so a test deployment
+      doesn't leave you waiting around. Worth setting longer again (15+)
+      once this is handling anything real, so there's more time to catch
+      a problem before the old version is gone for good.
+
+  EnableManualApproval:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      If true, adds a PAUSE lifecycle hook at PRE_PRODUCTION_TRAFFIC_SHIFT.
+      Unlike bake time (which only runs after cutover), this actually
+      gates the production traffic shift — the deployment stops and waits
+      for a human to approve it, with green reachable via the test header
+      the whole time it's waiting. No Lambda or extra IAM role is needed
+      for this — PAUSE hooks are a plain ECS/ALB-level feature.
+
+  ApprovalTimeoutMinutes:
+    Type: Number
+    Default: 60
+    Description: >
+      How long the deployment waits for approval before taking the
+      timeout action below automatically. Max allowed by ECS is 20160
+      (14 days).
+
+  ApprovalTimeoutAction:
+    Type: String
+    Default: ROLLBACK
+    AllowedValues: ["ROLLBACK", "CONTINUE"]
+    Description: >
+      What happens if nobody approves within ApprovalTimeoutMinutes.
+      ROLLBACK (AWS's own default) means an unattended deployment reverts
+      safely rather than quietly going live — recommended over CONTINUE
+      for exactly that reason.
+
+Conditions:
+  UseManualApproval: !Equals [!Ref EnableManualApproval, "true"]
 
 Resources:
 
@@ -905,6 +977,19 @@ Resources:
           FromPort: !Ref ContainerPort
           ToPort: !Ref ContainerPort
           SourceSecurityGroupId: !Ref AlbSecurityGroup
+      SecurityGroupEgress:
+        # Explicit on purpose. Fargate needs to reach the ECR API and the
+        # ECR image layer store (both HTTPS) to pull the image, and
+        # CloudWatch Logs (also HTTPS) to ship container logs. Without
+        # this, tasks fail to start with
+        # "ResourceInitializationError: unable to pull secrets or registry
+        # auth ... dial tcp ... i/o timeout" — the task can resolve the
+        # address but the security group silently drops the connection.
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS out - required to reach ECR, CloudWatch Logs, and STS
 
   ##########################################################################
   # LOAD BALANCER — blue (primary) + green (alternate) target groups,
@@ -915,6 +1000,12 @@ Resources:
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    # Explicit dependency, not implicit: this resource only references
+    # subnets and a security group, so CloudFormation has no natural
+    # reason to wait for the Internet Gateway to actually be attached to
+    # the VPC first — without this, ALB creation can race the attachment
+    # and fail with "VPC has no internet gateway" roughly half the time.
+    DependsOn: AttachGateway
     Properties:
       Name: !Sub "${ProjectName}-alb"
       Subnets:
@@ -1003,15 +1094,9 @@ Resources:
           TargetGroupArn: !Ref BlueTargetGroup
 
   ##########################################################################
-  # ECR + ECS
+  # ECS (the ECR repo itself lives in the prerequisites stack — this one
+  # just references it by name via the EcrRepositoryName parameter)
   ##########################################################################
-
-  EcrRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub "${ProjectName}-app"
-      ImageScanningConfiguration:
-        ScanOnPush: true
 
   EcsCluster:
     Type: AWS::ECS::Cluster
@@ -1076,10 +1161,11 @@ Resources:
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: !Sub "${ProjectName}-container"
-          # Placeholder image — CodeBuild will push real images to this repo
-          # on each pipeline run. A valid image must exist in ECR before the
-          # ECS service below can start (see guide.md).
-          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-app:latest"
+          # CodeBuild pushes real images to this repo on each pipeline run.
+          # A valid image must already exist (pushed as part of the
+          # prerequisites stack's manual steps) before this service can
+          # start — see guide.md.
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}:latest"
           PortMappings:
             - ContainerPort: !Ref ContainerPort
           LogConfiguration:
@@ -1125,9 +1211,18 @@ Resources:
             RoleArn: !GetAtt EcsInfrastructureRole.Arn
       DeploymentConfiguration:
         Strategy: BLUE_GREEN
-        BakeTimeInMinutes: 5
+        BakeTimeInMinutes: !Ref BakeTimeMinutes
         MaximumPercent: 200
         MinimumHealthyPercent: 100
+        LifecycleHooks: !If
+          - UseManualApproval
+          - - LifecycleStages:
+                - PRE_PRODUCTION_TRAFFIC_SHIFT
+              TargetType: PAUSE
+              TimeoutConfiguration:
+                TimeoutInMinutes: !Ref ApprovalTimeoutMinutes
+                Action: !Ref ApprovalTimeoutAction
+          - !Ref AWS::NoValue
 
   ##########################################################################
   # CODEBUILD
@@ -1168,7 +1263,9 @@ Resources:
                   - ecr:InitiateLayerUpload
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
-                Resource: !GetAtt EcrRepository.Arn
+                # Constructed, not !GetAtt — the repo is a parameter here,
+                # not a resource this stack created.
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -1192,12 +1289,17 @@ Resources:
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
         PrivilegedMode: true # required to build Docker images
         EnvironmentVariables:
-          - Name: AWS_ACCOUNT_ID
-            Value: !Ref AWS::AccountId
+          # AWS_REGION is normally provided automatically by CodeBuild.
+          # It's set explicitly here anyway — in practice it didn't
+          # reliably resolve inside buildspec shell commands on every
+          # account/image combination, and an empty value here silently
+          # produces a malformed ECR URL rather than a clear error.
           - Name: AWS_REGION
             Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
           - Name: ECR_REPO_NAME
-            Value: !Sub "${ProjectName}-app"
+            Value: !Ref EcrRepositoryName
           - Name: CONTAINER_NAME
             Value: !Sub "${ProjectName}-container"
       Source:
@@ -1214,14 +1316,6 @@ Resources:
       BucketName: !Sub "${ProjectName}-pipeline-artifacts-${AWS::AccountId}"
       VersioningConfiguration:
         Status: Enabled
-
-  # GitHub connection — created here, but must be manually authorized once
-  # in the console after this stack is created. See guide.md.
-  GitHubConnection:
-    Type: AWS::CodeStarConnections::Connection
-    Properties:
-      ConnectionName: !Sub "${ProjectName}-github-connection"
-      ProviderType: GitHub
 
   CodePipelineServiceRole:
     Type: AWS::IAM::Role
@@ -1250,7 +1344,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
-                Resource: !Ref GitHubConnection
+                Resource: !Ref GitHubConnectionArn
               - Effect: Allow
                 Action:
                   - codebuild:BatchGetBuilds
@@ -1288,7 +1382,7 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: "1"
               Configuration:
-                ConnectionArn: !Ref GitHubConnection
+                ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Sub "${GitHubRepoOwner}/${GitHubRepoName}"
                 BranchName: !Ref GitHubBranch
               OutputArtifacts:
@@ -1342,15 +1436,8 @@ Outputs:
     Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
 
   EcrRepositoryUri:
-    Description: Push your Docker images here
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-app"
-
-  GitHubConnectionArn:
-    Description: >
-      Go to Developer Tools > Settings > Connections in the console and click
-      "Update pending connection" to authorize this — CloudFormation cannot
-      do this step for you.
-    Value: !Ref GitHubConnection
+    Description: Where this stack's pipeline pushes images (created by the prerequisites stack)
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}"
 
   PipelineName:
     Value: !Ref Pipeline
@@ -1362,60 +1449,47 @@ Outputs:
     Value: !GetAtt EcsService.Name
 ```
 
-## Deploy it
+## Deploy it — two stacks, in order
 
-1. Open a terminal in the folder containing `cloudformation/blue-green-ecs-stack.yaml`
-2. Run:
+The ECS service and the pipeline in the main stack both start trying to
+work the moment the stack finishes creating — the service starts placing
+tasks, the pipeline's Source stage starts polling GitHub. Neither of
+those can actually succeed until an image exists in ECR and the GitHub
+connection is authorized. So rather than create everything at once and
+watch it fail predictably, deploy a small prerequisites stack first, do
+the two manual steps against it, *then* deploy the main stack — by which
+point everything it needs already exists.
+
+### Stage 1 — prerequisites stack (ECR repo + GitHub connection)
 
 ```bash
 aws cloudformation create-stack \
-  --stack-name bluegreen-demo \
-  --template-body file://cloudformation/blue-green-ecs-stack.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameters \
-      ParameterKey=ProjectName,ParameterValue=bluegreen-demo \
-      ParameterKey=GitHubRepoOwner,ParameterValue=<your-github-username> \
-      ParameterKey=GitHubRepoName,ParameterValue=<your-repo-name> \
-      ParameterKey=GitHubBranch,ParameterValue=main \
-      ParameterKey=BakeTimeMinutes,ParameterValue=3 \
-      ParameterKey=EnableManualApproval,ParameterValue=true \
-      ParameterKey=ApprovalTimeoutMinutes,ParameterValue=60 \
-      ParameterKey=ApprovalTimeoutAction,ParameterValue=ROLLBACK
+  --stack-name bluegreen-demo-prereqs \
+  --template-body file://cloudformation/00-prerequisites-stack.yaml \
+  --parameters ParameterKey=ProjectName,ParameterValue=bluegreen-demo
+
+aws cloudformation wait stack-create-complete --stack-name bluegreen-demo-prereqs
 ```
 
-All four of these can be omitted and default to the values shown.
-`BakeTimeMinutes` defaults to 3 — AWS's own default is 15, a long wait
-while you're iterating. `EnableManualApproval` defaults to `true`, adding
-a `PAUSE` hook at `PRE_PRODUCTION_TRAFFIC_SHIFT` — no Lambda or extra IAM
-role needed, it's a plain ECS feature. Set it to `false` if you'd rather
-the deployment shift to production automatically the moment green is
-healthy, with nothing waiting on anyone. `ApprovalTimeoutAction` defaults
-to `ROLLBACK`, meaning a deployment nobody approves in time reverts
-safely rather than quietly going live. See the note after Step 11 in the
-console section for exactly how this hook and bake time relate to each
-other — they gate two different moments, not the same one.
-
-3. Watch it create — either in the **CloudFormation console** (open the
-   stack, click the **Events** tab, and refresh), or by running:
+Grab its outputs — you'll need these for both the manual steps below and
+Stage 2:
 
 ```bash
-aws cloudformation wait stack-create-complete --stack-name bluegreen-demo
+aws cloudformation describe-stacks --stack-name bluegreen-demo-prereqs --query 'Stacks[0].Outputs'
 ```
 
-## Two manual steps CloudFormation can't do for you
+### Stage 2 — the two manual steps (now, before the main stack exists)
 
-These aren't gaps in the template — AWS deliberately requires a human for
-both, for security reasons.
+These aren't gaps in either template — AWS deliberately requires a human
+for both, for security reasons.
 
 **1. Authorize the GitHub connection.** Go to the **Developer Tools**
 console → **Settings → Connections** in the left sidebar → find
-`bluegreen-demo-github-connection` (it will show status **Pending**) →
-click it → click **Update pending connection** → follow the GitHub
-authorization prompt → click **Connect**. The pipeline's Source stage
-stays broken until you do this.
+`bluegreen-demo-github-connection` (status **Pending**) → click it →
+click **Update pending connection** → follow the GitHub authorization
+prompt → click **Connect**.
 
-**2. Push the first image to ECR.** The ECS service needs a real image to
-launch its first tasks.
+**2. Push the first image to ECR.**
 
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -1427,16 +1501,67 @@ docker tag bluegreen-demo-app:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/b
 docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/bluegreen-demo-app:latest
 ```
 
+Both of these can happen in either order relative to each other — just
+both before Stage 3.
+
+### Stage 3 — the main stack
+
+Now take the `GitHubConnectionArn` and `EcrRepositoryName` values from
+the prerequisites stack's outputs and pass them in here:
+
+```bash
+CONN_ARN=$(aws cloudformation describe-stacks --stack-name bluegreen-demo-prereqs \
+  --query "Stacks[0].Outputs[?OutputKey=='GitHubConnectionArn'].OutputValue" --output text)
+ECR_NAME=$(aws cloudformation describe-stacks --stack-name bluegreen-demo-prereqs \
+  --query "Stacks[0].Outputs[?OutputKey=='EcrRepositoryName'].OutputValue" --output text)
+
+aws cloudformation create-stack \
+  --stack-name bluegreen-demo \
+  --template-body file://cloudformation/blue-green-ecs-stack.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameters \
+      ParameterKey=ProjectName,ParameterValue=bluegreen-demo \
+      ParameterKey=EcrRepositoryName,ParameterValue=$ECR_NAME \
+      ParameterKey=GitHubConnectionArn,ParameterValue=$CONN_ARN \
+      ParameterKey=GitHubRepoOwner,ParameterValue=<your-github-username> \
+      ParameterKey=GitHubRepoName,ParameterValue=<your-repo-name> \
+      ParameterKey=GitHubBranch,ParameterValue=main \
+      ParameterKey=BakeTimeMinutes,ParameterValue=3 \
+      ParameterKey=EnableManualApproval,ParameterValue=true \
+      ParameterKey=ApprovalTimeoutMinutes,ParameterValue=60 \
+      ParameterKey=ApprovalTimeoutAction,ParameterValue=ROLLBACK
+
+aws cloudformation wait stack-create-complete --stack-name bluegreen-demo
+```
+
+`BakeTimeMinutes` defaults to 3 — AWS's own default is 15, a long wait
+while you're iterating. `EnableManualApproval` defaults to `true`, adding
+a `PAUSE` hook at `PRE_PRODUCTION_TRAFFIC_SHIFT` — no Lambda or extra IAM
+role needed, it's a plain ECS feature. Set it to `false` if you'd rather
+the deployment shift to production automatically the moment green is
+healthy, with nothing waiting on anyone. `ApprovalTimeoutAction` defaults
+to `ROLLBACK`, meaning a deployment nobody approves in time reverts
+safely rather than quietly going live. See the note after Step 11 in the
+console section for exactly how this hook and bake time relate to each
+other — they gate two different moments, not the same one.
+
+By the time this stack finishes creating, the image already exists and
+the connection is already authorized — the ECS service should start
+tasks successfully on the first try, and the pipeline's Source stage
+should work the first time you push a commit, with none of the
+expected-but-confusing-looking failures you'd get from creating
+everything in one shot.
+
 ## Check what you got
 
 ```bash
 aws cloudformation describe-stacks --stack-name bluegreen-demo --query 'Stacks[0].Outputs'
 ```
 
-This prints the ALB URL, ECR repository URI, pipeline name, and ECS
-cluster/service names, so you don't have to go hunting through the
-console. There's no separate test URL — the same URL serves both blue and
-green, told apart by a header (see below).
+This prints the ALB URL, pipeline name, and ECS cluster/service names, so
+you don't have to go hunting through the console. There's no separate
+test URL — the same URL serves both blue and green, told apart by a
+header (see below).
 
 ## Test it
 
@@ -1464,29 +1589,24 @@ in the console.
 
 # Automated Teardown (CloudFormation)
 
+Two stacks were created, so two need deleting — **main stack first, then
+prerequisites**. Deleting them in the other order will leave the main
+stack's pipeline referencing a GitHub connection that no longer exists,
+and its deployments referencing an ECR repo that no longer exists.
+
 Unlike the manual teardown, you don't need separate steps for the
-CloudWatch log group or the task definition here — both are resources
-CloudFormation created as part of this stack (`EcsLogGroup` and
+CloudWatch log group or the task definition — both are resources
+CloudFormation created as part of the main stack (`EcsLogGroup` and
 `TaskDefinition`), so `delete-stack` removes them along with everything
 else. The task definition gets deregistered, not permanently deleted —
 if you want it fully gone rather than just inactive, that's an optional
 extra step at the end of this section.
 
-CloudFormation refuses to delete a couple of resource types if they still
-have content sitting in them. Handle these first, or `delete-stack` will
-fail partway through and leave the stack stuck in `DELETE_FAILED`.
+## Step 1 — Empty the S3 artifact bucket
 
-## Step 1 — Empty the ECR repository
-
-```bash
-aws ecr batch-delete-image --repository-name bluegreen-demo-app \
-  --image-ids "$(aws ecr list-images --repository-name bluegreen-demo-app --query 'imageIds' --output json)"
-```
-
-## Step 2 — Empty the S3 artifact bucket
-
-Versioning was turned on for this bucket, so a normal delete leaves old
-versions behind — this clears those too.
+CloudFormation refuses to delete a non-empty bucket. Versioning was
+turned on for this one, so a normal delete leaves old versions behind —
+this clears those too.
 
 ```bash
 aws s3 rm s3://bluegreen-demo-artifacts-$ACCOUNT_ID --recursive
@@ -1495,7 +1615,7 @@ aws s3api delete-objects --bucket bluegreen-demo-artifacts-$ACCOUNT_ID \
   --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}')" 2>/dev/null || true
 ```
 
-## Step 3 — Delete the stack
+## Step 2 — Delete the main stack
 
 ```bash
 aws cloudformation delete-stack --stack-name bluegreen-demo
@@ -1504,23 +1624,40 @@ aws cloudformation wait stack-delete-complete --stack-name bluegreen-demo
 
 Or in the console: open the stack → click **Delete** → confirm in the dialog.
 
-## Step 4 — Confirm it's gone
+## Step 3 — Empty the ECR repository
+
+This lives in the prerequisites stack now, so it's handled separately,
+after the main stack is gone (nothing in the main stack needs it anymore
+at this point).
+
+```bash
+aws ecr batch-delete-image --repository-name bluegreen-demo-app \
+  --image-ids "$(aws ecr list-images --repository-name bluegreen-demo-app --query 'imageIds' --output json)"
+```
+
+## Step 4 — Delete the prerequisites stack
+
+```bash
+aws cloudformation delete-stack --stack-name bluegreen-demo-prereqs
+aws cloudformation wait stack-delete-complete --stack-name bluegreen-demo-prereqs
+```
+
+This removes the ECR repo and the GitHub connection together — no need
+to delete the connection separately, CloudFormation still owns and
+tracks it even though you authorized it by hand.
+
+## Step 5 — Confirm both are gone
 
 ```bash
 aws cloudformation describe-stacks --stack-name bluegreen-demo
+aws cloudformation describe-stacks --stack-name bluegreen-demo-prereqs
 ```
 
-This should return a "does not exist" error once deletion finishes. If
-the stack is stuck in `DELETE_FAILED`, check the **Events** tab to see
-which resource blocked it — it's almost always the ECR repo or S3 bucket
-not being fully empty, or the GitHub connection needing to be deleted
-separately first:
-
-```bash
-aws codestar-connections delete-connection --connection-arn <connection-arn>
-```
-
-then run `delete-stack` again.
+Both should return a "does not exist" error once deletion finishes. If
+either is stuck in `DELETE_FAILED`, check that stack's **Events** tab to
+see which resource blocked it — for the main stack it's almost always the
+S3 bucket not being fully empty; for the prerequisites stack, almost
+always the ECR repo still having images in it.
 
 ---
 

@@ -1,32 +1,38 @@
 # Zero-Downtime Blue-Green Deployment Pipeline on ECS Fargate
 
 A CI/CD pipeline that deploys a containerized app to ECS Fargate using a
-true blue-green deployment strategy — the new version is tested privately
-behind a second listener before any real traffic reaches it, and rollback
-means simply not shifting traffic to it, not scrambling to undo a bad
-rolling update.
+true blue-green deployment strategy — the new version is checked privately
+behind a test header before any real traffic reaches it, then production
+traffic shifts all at once once it's approved. A manual approval gate
+(covered below) is what actually makes "approved" mean something here —
+without it, the shift happens automatically the moment the new version
+passes its health checks, whether or not anyone looked at it first.
 
 This uses **Amazon ECS's native blue/green deployment feature**, not AWS
 CodeDeploy. ECS folded CodeDeploy's job (traffic shifting, bake time,
 rollback) directly into the service itself in July 2025 — no separate
-CodeDeploy application, deployment group, or `appspec.yaml` needed.
+CodeDeploy application, deployment group, or `appspec.yaml` needed. On
+top of that, this project adds a `PAUSE` lifecycle hook for manual
+approval before cutover — a plain ECS feature, no Lambda required.
 
 **Read the full guide: [`guide.md`](./guide.md)** — it covers the
 introduction, architecture, a click-by-click walkthrough in the AWS
-Console, the full CloudFormation template with deployment and teardown
+Console, the full CloudFormation templates with deployment and teardown
 commands, and a troubleshooting section covering real errors hit while
 building this (Docker permission issues, missing CodeBuild environment
-variables, ECR push permissions, and the security group egress issue
-that causes `ResourceInitializationError` on task start).
+variables, ECR push permissions, the security group egress issue that
+causes `ResourceInitializationError` on task start, and a CloudFormation
+dependency race that can fail ALB creation).
 
 ## Why blue-green instead of a rolling update
 
 A rolling update replaces old tasks with new ones gradually — if the new
 version has a bug, some users hit it while you're still detecting the
-problem. Blue-green deploys the new version alongside the old one, tests
-it against real infrastructure through a separate listener, and only then
-switches production traffic over. If something's wrong, you just don't
-switch — the old version never stopped running.
+problem. Blue-green deploys the new version alongside the old one and
+lets you check it through a private test route first. With the manual
+approval hook this project adds, nothing goes live until you say so; if
+it looks wrong, you reject it and the old version never stopped serving
+traffic in the first place.
 
 ## What's in this repo
 
@@ -37,12 +43,16 @@ switch — the old version never stopped running.
 │                                                  console walkthrough, CloudFormation,
 │                                                  and teardown for both
 ├── cloudformation/
-│   └── blue-green-ecs-stack.yaml               ← the CloudFormation template on its own,
-│                                                  if you just want the file to deploy
+│   ├── 00-prerequisites-stack.yaml             ← deploy FIRST: just the ECR repo and
+│   │                                              GitHub connection, so the two manual
+│   │                                              steps can happen before anything else
+│   │                                              depends on them
+│   └── blue-green-ecs-stack.yaml               ← deploy SECOND: everything else (VPC,
+│                                                  ALB, ECS service, pipeline)
 └── pipeline-config/
     ├── buildspec.yml                           ← CodeBuild: builds image, pushes it,
     │                                              writes imagedefinitions.json
-    ├── Dockerfile                        ← minimal placeholder app for testing the pipeline
+    ├── Dockerfile                               ← minimal placeholder app for testing the pipeline
     └── index.html                               ← placeholder app content
 ```
 
