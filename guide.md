@@ -1618,8 +1618,7 @@ aws s3api delete-objects --bucket bluegreen-demo-artifacts-$ACCOUNT_ID \
 ## Step 2 — Delete the main stack
 
 ```bash
-aws cloudformation delete-stack --stack-name bluegreen-demo
-aws cloudformation wait stack-delete-complete --stack-name bluegreen-demo
+aws cloudformation delete-stack --stack-name bluegreen-demo --deletion-mode FORCE_DELETE_STACK
 ```
 
 Or in the console: open the stack → click **Delete** → confirm in the dialog.
