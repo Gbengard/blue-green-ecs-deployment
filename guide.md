@@ -1304,7 +1304,7 @@ Resources:
             Value: !Sub "${ProjectName}-container"
       Source:
         Type: CODEPIPELINE
-        BuildSpec: pipeline-config/buildspec.yml
+        BuildSpec: buildspec.yml
 
   ##########################################################################
   # CODEPIPELINE
@@ -1523,8 +1523,8 @@ aws cloudformation create-stack \
       ParameterKey=ProjectName,ParameterValue=bluegreen-demo \
       ParameterKey=EcrRepositoryName,ParameterValue=$ECR_NAME \
       ParameterKey=GitHubConnectionArn,ParameterValue=$CONN_ARN \
-      ParameterKey=GitHubRepoOwner,ParameterValue=<your-github-username> \
-      ParameterKey=GitHubRepoName,ParameterValue=<your-repo-name> \
+      ParameterKey=GitHubRepoOwner,ParameterValue=Gbengard \
+      ParameterKey=GitHubRepoName,ParameterValue=blue-green-ecs-deployment \
       ParameterKey=GitHubBranch,ParameterValue=main \
       ParameterKey=BakeTimeMinutes,ParameterValue=3 \
       ParameterKey=EnableManualApproval,ParameterValue=true \
