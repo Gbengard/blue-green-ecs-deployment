@@ -533,21 +533,23 @@ problems from here on are isolated to the pipeline you're about to build.
 
 1. **CodeBuild console** → click **Create build project**
 2. Project name: `bluegreen-demo-build`
-3. Source provider: **GitHub**
-4. Click **Connect using OAuth** (or **GitHub Apps**, whichever your
-   account offers) and authorize access if you haven't already
-5. Repository: choose your repo
-6. Environment image: **Managed image**
-7. Operating system: **Amazon Linux 2**
-8. Runtime: **Standard**
-9. Image: use the latest available standard image
-10. Turn on **Privileged** — required, since building a Docker image
+3. Source provider: **AWS CodePipeline** — not GitHub. This project is
+   going to be plugged into the pipeline's Build stage in Step 10, and
+   the pipeline's own Source stage (which *does* connect to GitHub) is
+   what actually hands this project its source code as an artifact. No
+   repository or branch to pick here — there's nothing to configure in
+   this section at all, which is the signal you picked the right option
+4. Environment image: **Managed image**
+5. Operating system: **Amazon Linux 2**
+6. Runtime: **Standard**
+7. Image: use the latest available standard image
+8. Turn on **Privileged** — required, since building a Docker image
     inside CodeBuild needs this
-11. Service role: **Existing service role** → select
+9. Service role: **Existing service role** → select
     `bluegreen-demo-codebuild-role` (the one you built with full
     permissions back in Step 7 — no need to create a new one here, and
     nothing to patch afterward)
-12. Expand **Additional configuration**, scroll to **Environment
+10. Expand **Additional configuration**, scroll to **Environment
     variables**, and add these four — the buildspec reads them and the
     build fails (or silently builds a malformed ECR URL) without them:
     - `AWS_REGION` = your region, e.g. `us-east-1`. CodeBuild is supposed
@@ -560,9 +562,9 @@ problems from here on are isolated to the pipeline you're about to build.
       don't have it memorized)
     - `ECR_REPO_NAME` = `bluegreen-demo-app`
     - `CONTAINER_NAME` = `bluegreen-demo-container`
-13. Buildspec: choose **Use a buildspec file**, path
+11. Buildspec: choose **Use a buildspec file**, path
     `pipeline-config/buildspec.yml`
-14. Click **Create build project**
+12. Click **Create build project**
 
 That's it — since the role already has everything it needs from Step 7,
 there's nothing left to go back and fix after this.
@@ -1304,7 +1306,7 @@ Resources:
             Value: !Sub "${ProjectName}-container"
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec.yml
+        BuildSpec: pipeline-config/buildspec.yml
 
   ##########################################################################
   # CODEPIPELINE
@@ -1523,8 +1525,8 @@ aws cloudformation create-stack \
       ParameterKey=ProjectName,ParameterValue=bluegreen-demo \
       ParameterKey=EcrRepositoryName,ParameterValue=$ECR_NAME \
       ParameterKey=GitHubConnectionArn,ParameterValue=$CONN_ARN \
-      ParameterKey=GitHubRepoOwner,ParameterValue=Gbengard \
-      ParameterKey=GitHubRepoName,ParameterValue=blue-green-ecs-deployment \
+      ParameterKey=GitHubRepoOwner,ParameterValue=<your-github-username> \
+      ParameterKey=GitHubRepoName,ParameterValue=<your-repo-name> \
       ParameterKey=GitHubBranch,ParameterValue=main \
       ParameterKey=BakeTimeMinutes,ParameterValue=3 \
       ParameterKey=EnableManualApproval,ParameterValue=true \
@@ -1618,7 +1620,8 @@ aws s3api delete-objects --bucket bluegreen-demo-artifacts-$ACCOUNT_ID \
 ## Step 2 — Delete the main stack
 
 ```bash
-aws cloudformation delete-stack --stack-name bluegreen-demo --deletion-mode FORCE_DELETE_STACK
+aws cloudformation delete-stack --stack-name bluegreen-demo
+aws cloudformation wait stack-delete-complete --stack-name bluegreen-demo
 ```
 
 Or in the console: open the stack → click **Delete** → confirm in the dialog.
@@ -1696,6 +1699,19 @@ you expect.
 
 These are actual errors hit while building this project, kept here with
 their real fixes rather than buried in a changelog somewhere.
+
+**CodeBuild project's Source shows "GitHub" instead of "CodePipeline" (or
+vice versa, and you're not sure which is right)**
+When this project is being used inside a pipeline's Build stage,
+`CodePipeline` is the correct source provider — the pipeline's own Source
+stage connects to GitHub and hands this project an artifact; the project
+itself shouldn't also be configured to fetch from GitHub independently.
+If you see "GitHub" instead and the build is working anyway, that's
+because CodePipeline overrides a project's own source settings at
+invocation time when it's used as a pipeline action — so it was likely
+still functioning correctly, just configured in a way that's only
+correct *because* of that override, rather than being correct on its own.
+Worth fixing for clarity even if nothing was actually broken.
 
 **`permission denied while trying to connect to the Docker API at
 unix:///var/run/docker.sock`**
