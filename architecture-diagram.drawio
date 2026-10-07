@@ -11,16 +11,20 @@
         </mxCell>
 
         <!-- ================= EXTERNAL ACTORS (plain, non-AWS) ================= -->
-        <mxCell id="github" value="GitHub repo&#10;pipeline-config/ branch: main" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F2F3F3;strokeColor=#545B64;fontColor=#232F3E;fontSize=12;fontStyle=1;arcSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="80" width="200" height="60" as="geometry" />
+        <!-- Real GitHub logo, embedded directly (verified SVG from the simple-icons
+             project, CC0/MIT licensed) — not a guessed draw.io stencil name -->
+        <mxCell id="github" value="GitHub repo&#10;pipeline-config/ branch: main" style="shape=image;image=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+R2l0SHViPC90aXRsZT48cGF0aCBkPSJNMTIgLjI5N2MtNi42MyAwLTEyIDUuMzczLTEyIDEyIDAgNS4zMDMgMy40MzggOS44IDguMjA1IDExLjM4NS42LjExMy44Mi0uMjU4LjgyLS41NzcgMC0uMjg1LS4wMS0xLjA0LS4wMTUtMi4wNC0zLjMzOC43MjQtNC4wNDItMS42MS00LjA0Mi0xLjYxQzQuNDIyIDE4LjA3IDMuNjMzIDE3LjcgMy42MzMgMTcuN2MtMS4wODctLjc0NC4wODQtLjcyOS4wODQtLjcyOSAxLjIwNS4wODQgMS44MzggMS4yMzYgMS44MzggMS4yMzYgMS4wNyAxLjgzNSAyLjgwOSAxLjMwNSAzLjQ5NS45OTguMTA4LS43NzYuNDE3LTEuMzA1Ljc2LTEuNjA1LTIuNjY1LS4zLTUuNDY2LTEuMzMyLTUuNDY2LTUuOTMgMC0xLjMxLjQ2NS0yLjM4IDEuMjM1LTMuMjItLjEzNS0uMzAzLS41NC0xLjUyMy4xMDUtMy4xNzYgMCAwIDEuMDA1LS4zMjIgMy4zIDEuMjMuOTYtLjI2NyAxLjk4LS4zOTkgMy0uNDA1IDEuMDIuMDA2IDIuMDQuMTM4IDMgLjQwNSAyLjI4LTEuNTUyIDMuMjg1LTEuMjMgMy4yODUtMS4yMy42NDUgMS42NTMuMjQgMi44NzMuMTIgMy4xNzYuNzY1Ljg0IDEuMjMgMS45MSAxLjIzIDMuMjIgMCA0LjYxLTIuODA1IDUuNjI1LTUuNDc1IDUuOTIuNDIuMzYuODEgMS4wOTYuODEgMi4yMiAwIDEuNjA2LS4wMTUgMi44OTYtLjAxNSAzLjI4NiAwIC4zMTUuMjEuNjkuODI1LjU3QzIwLjU2NSAyMi4wOTIgMjQgMTcuNTkyIDI0IDEyLjI5N2MwLTYuNjI3LTUuMzczLTEyLTEyLTEyIi8+PC9zdmc+;fontColor=#232F3E;fontSize=12;fontStyle=1;verticalLabelPosition=bottom;verticalAlign=top;align=center;imageBackground=#F2F3F3;imageBorder=#545B64;" vertex="1" parent="1">
+          <mxGeometry x="100" y="80" width="56" height="56" as="geometry" />
         </mxCell>
 
-        <mxCell id="endusers" value="End users&#10;normal browser traffic" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F2F3F3;strokeColor=#545B64;fontColor=#232F3E;fontSize=12;fontStyle=1;arcSize=10;" vertex="1" parent="1">
-          <mxGeometry x="1440" y="80" width="200" height="60" as="geometry" />
+        <!-- Real AWS icon: mxgraph.aws4.users (verified standalone "crowd" icon,
+             resource-level pattern — strokeColor=none, not the resourceIcon pattern) -->
+        <mxCell id="endusers" value="End users&#10;normal browser traffic" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#545B64;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.users;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="80" width="56" height="56" as="geometry" />
         </mxCell>
 
-        <mxCell id="tester" value="You (testing)&#10;curl -H X-Bg-Test: true" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F2F3F3;strokeColor=#545B64;fontColor=#232F3E;fontSize=12;fontStyle=1;arcSize=10;" vertex="1" parent="1">
-          <mxGeometry x="1440" y="160" width="200" height="60" as="geometry" />
+        <mxCell id="tester" value="You (testing)&#10;curl -H X-Bg-Test: true" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#545B64;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=1;aspect=fixed;shape=mxgraph.aws4.users;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="170" width="56" height="56" as="geometry" />
         </mxCell>
 
         <!-- ================= DEVELOPER TOOLS CHAIN (real AWS icons) ================= -->
@@ -180,8 +184,50 @@
         </mxCell>
 
         <!-- ================= LEGEND ================= -->
-        <mxCell id="legendtext" value="Icons are the real AWS4 icon set bundled in draw.io. IAM roles (task execution, task, ECS infrastructure, CodeBuild, CodePipeline) omitted for clarity — see guide.md for the full list." style="text;html=1;fontSize=11;align=left;fontColor=#888780;" vertex="1" parent="1">
-          <mxGeometry x="60" y="1210" width="1000" height="40" as="geometry" />
+        <!-- ================= IAM ROLES (real icon, confirmed across multiple
+             independent sources: mxgraph.aws4.identity_and_access_management,
+             service-level resourceIcon pattern, security red #DD344C) ================= -->
+        <mxCell id="iambox" value="IAM roles (supporting — not part of the request flow)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCEBEB;strokeColor=#DD344C;fontColor=#8C1F2E;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="240" width="280" height="185" as="geometry" />
+        </mxCell>
+
+        <mxCell id="iam1_icon" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management;" vertex="1" parent="1">
+          <mxGeometry x="1376" y="268" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="iam1_label" value="task-exec-role — pulls image, ships logs" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fontColor=#8C1F2E;" vertex="1" parent="1">
+          <mxGeometry x="1408" y="268" width="224" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="iam2_icon" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management;" vertex="1" parent="1">
+          <mxGeometry x="1376" y="296" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="iam2_label" value="task-role — the app's own permissions" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fontColor=#8C1F2E;" vertex="1" parent="1">
+          <mxGeometry x="1408" y="296" width="224" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="iam3_icon" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management;" vertex="1" parent="1">
+          <mxGeometry x="1376" y="324" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="iam3_label" value="ecs-infra-role — lets ECS flip the ALB rule" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fontColor=#8C1F2E;" vertex="1" parent="1">
+          <mxGeometry x="1408" y="324" width="224" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="iam4_icon" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management;" vertex="1" parent="1">
+          <mxGeometry x="1376" y="352" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="iam4_label" value="codebuild-role — push to ECR, write logs" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fontColor=#8C1F2E;" vertex="1" parent="1">
+          <mxGeometry x="1408" y="352" width="224" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="iam5_icon" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management;" vertex="1" parent="1">
+          <mxGeometry x="1376" y="380" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="iam5_label" value="pipeline-role — runs the pipeline itself" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fontColor=#8C1F2E;" vertex="1" parent="1">
+          <mxGeometry x="1408" y="380" width="224" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legendtext" value="Icons are the real AWS4 icon set bundled in draw.io, plus the actual GitHub logo (embedded, from simple-icons). Note: Target Group boxes use plain styling, not an AWS icon — AWS's official set does include a Target Group pictogram, but I could not verify the exact internal draw.io name for it; search &quot;target group&quot; in draw.io's own shape panel (left sidebar, AWS4 &gt; Networking) to drag the real one on if you want it." style="text;html=1;fontSize=11;align=left;fontColor=#888780;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1210" width="1500" height="60" as="geometry" />
         </mxCell>
 
       </root>
