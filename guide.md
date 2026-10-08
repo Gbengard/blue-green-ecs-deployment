@@ -78,7 +78,13 @@ You'll need:
   yourself before the pipeline takes over
 - A GitHub account and a repo the pipeline can pull from
 
-**Important — clone this repo first -** ```bash git clone https://github.com/Gbengard/blue-green-ecs-deployment.git ``` The pipeline needs the
+**Important — clone this repo first -**
+
+```bash
+git clone https://github.com/Gbengard/blue-green-ecs-deployment.git
+```
+
+The pipeline needs the
 `pipeline-config/` folder — containing `buildspec.yml`, `Dockerfile`, and
 `index.html` — sitting in your own GitHub repo before it can run. Push
 the **whole cloned project as-is**, keeping `pipeline-config/` as a
