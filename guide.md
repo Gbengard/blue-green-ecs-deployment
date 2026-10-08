@@ -488,8 +488,17 @@ Bake time: AWS defaults this to 15 minutes, which makes iterating on
 32. Green target group: `bluegreen-demo-tg-green`
 33. Click **Create**
 
-
 ![ECS service creation screen](images/service.png)
+
+33. Open the ECS service → deployment timeline to watch it progress through each phase in real time
+
+34. The deployment should now stop at Test traffic shift or wait till it gets to, showing status **Awaiting action** — this is the pause hook we set up.
+
+![ECS awaiting action](images/take-action.png)
+
+35. Click **Take Action** → **Continue** to let it proceed to Production traffic shift.
+
+![ECS take action screen](images/take-action-completed.png)
 
 
 ## Step 8a — Confirm the blue environment actually works
