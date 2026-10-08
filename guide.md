@@ -498,7 +498,7 @@ Bake time: AWS defaults this to 15 minutes, which makes iterating on
 
 35. Click **Take Action** → **Continue** to let it proceed to Production traffic shift.
 
-![ECS take action screen](images/take-action-completed.png)
+![ECS take action screen](images/take-action-continue.png)
 
 
 ## Step 8a — Confirm the blue environment actually works
