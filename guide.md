@@ -78,7 +78,7 @@ You'll need:
   yourself before the pipeline takes over
 - A GitHub account and a repo the pipeline can pull from
 
-**Important — clone this repo first -**
+**Important — clone this repo first:**
 
 ```bash
 git clone https://github.com/Gbengard/blue-green-ecs-deployment.git
