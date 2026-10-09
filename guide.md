@@ -47,11 +47,9 @@ teaches you what's happening.
 
 ## 2. Architecture
 
-
 ![Overall architecture diagram](images/bluegreen-ecs.png)
 
 ![Resource relationship diagram](images/resources-diagram.png)
-
 
 The part that actually makes this zero-downtime is the two target groups
 and the two listener rules — both living on the same listener, port 80.
@@ -73,7 +71,8 @@ of a port.)
 You'll need:
 
 - An AWS account with permissions to create VPCs, ECS, IAM roles, ALBs,
-  CodePipeline, and CodeBuild resources. All resources in this guide are created in us-east-1.
+  CodePipeline, and CodeBuild resources. All resources in this guide are
+  created in `us-east-1`.
 - Docker installed locally, if you want to build and push the first image
   yourself before the pipeline takes over
 - A GitHub account and a repo the pipeline can pull from
@@ -84,16 +83,15 @@ You'll need:
 git clone https://github.com/Gbengard/blue-green-ecs-deployment.git
 ```
 
-The pipeline needs the
-`pipeline-config/` folder — containing `buildspec.yml`, `Dockerfile`, and
-`index.html` — sitting in your own GitHub repo before it can run. Push
-the **whole cloned project as-is**, keeping `pipeline-config/` as a
-subfolder rather than flattening its contents into the repo root — Step 9
-points CodeBuild at `pipeline-config/buildspec.yml`, and the buildspec
-itself `cd`s into `pipeline-config/` to find the Dockerfile, so the
-folder needs to stay where it is. Without this step, the pipeline's
-Source stage has nothing to pull, and everything after it will fail
-before it even starts.
+The pipeline needs the `pipeline-config/` folder — containing
+`buildspec.yml`, `Dockerfile`, and `index.html` — sitting in your own
+GitHub repo before it can run. Push the **whole cloned project as-is**,
+keeping `pipeline-config/` as a subfolder rather than flattening its
+contents into the repo root — Step 9 points CodeBuild at
+`pipeline-config/buildspec.yml`, and the buildspec itself `cd`s into
+`pipeline-config/` to find the Dockerfile, so the folder needs to stay
+where it is. Without this step, the pipeline's Source stage has nothing
+to pull, and everything after it will fail before it even starts.
 
 Every resource in this guide has a fixed name, so it's easy to follow and
 easy to find again later. Keep this table open as you work through it.
@@ -136,7 +134,7 @@ capturing for your own notes or a write-up, I've marked what to screenshot.
 
 ## Step 1 — Create the VPC
 
-1. Open the through this link [**VPC console**](https://us-east-1.console.aws.amazon.com/vpcconsole/home?region=us-east-1#Home:)
+1. Open the [**VPC console**](https://us-east-1.console.aws.amazon.com/vpcconsole/home?region=us-east-1#Home:)
 2. Click **Create VPC**
 3. Choose **VPC only**
 4. Name: `bluegreen-demo-vpc`
@@ -144,9 +142,7 @@ capturing for your own notes or a write-up, I've marked what to screenshot.
 6. Leave everything else as default
 7. Click **Create VPC** at the bottom of the page
 
-
 ![VPC creation screen](images/vpc.png)
-
 
 ## Step 2 — Create two public subnets
 
@@ -162,10 +158,10 @@ capturing for your own notes or a write-up, I've marked what to screenshot.
 
 ![Creating the two public subnets](images/subnets.png)
 
-8. Back on the Subnets page, check the box next to one of the new subnets.
+8. Back on the Subnets page, check the box next to one of the new subnets
 9. Click **Actions → Edit subnet settings**
-10. Turn on **Auto-assign public IPv4 address** for each, then click **Save**
-11. Then do same steps for the second subnets.
+10. Turn on **Auto-assign public IPv4 address**, then click **Save**
+11. Repeat Steps 8–10 for the second subnet
 
 Two subnets in two different zones matter here — if one zone has a
 problem, your app keeps running in the other.
@@ -193,12 +189,12 @@ problem, your app keeps running in the other.
 10. Check both `bluegreen-demo-public-a` and `bluegreen-demo-public-b` →
     click **Save associations**
 
-
 ![Route table subnet associations](images/subnet-association.png)
 
 ## Step 4 — Security groups
 
-1. **EC2 console** → left sidebar **Security Groups**  or follow from [**here**](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#SecurityGroups:) → click **Create security group**
+1. **EC2 console** → left sidebar **Security Groups**, or follow this
+   [**link**](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#SecurityGroups:) → click **Create security group**
 2. Name: `bluegreen-demo-alb-sg`, Description: anything descriptive, VPC:
    `bluegreen-demo-vpc`
 3. Under **Inbound rules**, click **Add rule**:
@@ -221,14 +217,13 @@ problem, your app keeps running in the other.
    then dies with
    `ResourceInitializationError: unable to pull secrets or registry auth ... dial tcp ... i/o timeout`.
 
-
 ![Service security group inbound and outbound rules](images/svc-sg.png)
 
 9. Click **Create security group**
 
 This inbound rule from Step 7 is important: it means only traffic coming
-through your
-load balancer can reach the containers, nothing else can hit them directly.
+through your load balancer can reach the containers, nothing else can
+hit them directly.
 
 ## Step 5 — Push an image to ECR
 
@@ -248,9 +243,9 @@ docker tag bluegreen-demo-app:latest <account-id>.dkr.ecr.<region>.amazonaws.com
 docker push <account-id>.dkr.ecr.<region>.amazonaws.com/bluegreen-demo-app:latest
 ```
 
-If you get this error `aws: [ERROR]: Your session has expired. Please reauthenticate using 'aws login'.
-password is empty`. Type `aws login`, it will refer you to browser to login, after that, rerun.
-
+If you get the error
+`aws: [ERROR]: Your session has expired. Please reauthenticate using 'aws login'. password is empty`,
+run `aws login` — it opens your browser to log in, then rerun the commands above.
 
 ![Docker login, build, tag, and push commands running in the terminal](images/docker-push-terminal.png)
 
@@ -273,14 +268,14 @@ doesn't apply to already-open terminal sessions. Confirm it worked with
 
 ![ECR repository showing the pushed image](images/ecr.png)
 
-
 This step can't be skipped, even in the CloudFormation version — the ECS
 service you create later needs a real image to exist before it can start
 any tasks.
 
 ## Step 6 — Load balancer, target groups, and listener rules
 
-1. **EC2 console** → left sidebar **Target Groups** or follow from [**here**](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#TargetGroups:) → click **Create target group**
+1. **EC2 console** → left sidebar **Target Groups**, or follow this
+   [**link**](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#TargetGroups:) → click **Create target group**
 2. Target type: **IP addresses**
 3. Name: `bluegreen-demo-tg-blue`, Protocol: HTTP, Port: 80, VPC:
    `bluegreen-demo-vpc`
@@ -289,12 +284,11 @@ any tasks.
    targets — ECS will do that automatically once the service exists)
 6. Repeat Steps 1–5 for a second one named `bluegreen-demo-tg-green`
 
-
 ![Blue and green target groups created](images/target-groups.png)
 
-7. Left sidebar → **Load Balancers** or follow using this [**link**](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#LoadBalancers:) → click **Create load balancer**
+7. Left sidebar → **Load Balancers**, or follow this
+   [**link**](https://us-east-1.console.aws.amazon.com/ec2/home?region=us-east-1#LoadBalancers:) → click **Create load balancer**
 8. Under **Application Load Balancer**, click **Create**
-
 
 ![Application Load Balancer creation screen](images/alb.png)
 
@@ -318,47 +312,45 @@ carrying a specific test header get caught by the test rule first.
 15. Rule name: `test-rule`
 16. Add condition: choose **HTTP Header**, header name `X-Bg-Test`, value
     `true`
-17. Action: forward to `bluegreen-demo-tg-green`, then click on `Next`
+17. Action: forward to `bluegreen-demo-tg-green`, then click **Next**
 18. Priority: `1`
 19. Click **Save**
 20. Click the **Add rule** icon again to add the production rule
 21. Rule name: `prod-rule`
-23. Add condition: **Path** → value `/*`
-24. Action: forward to `bluegreen-demo-tg-blue`, then click on `Next`
-25. Priority: `2` (higher number = checked after the test rule)
-26. Click **Save**
-
+22. Add condition: **Path** → value `/*`
+23. Action: forward to `bluegreen-demo-tg-blue`, then click **Next**
+24. Priority: `2` (higher number = checked after the test rule)
+25. Click **Save**
 
 ![ALB listener rules for test and production traffic](images/alb-rule.png)
 
 ## Step 7 — IAM roles
 
-Go to [**IAM console**](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/home) → left sidebar **Roles** → click **Create role**, for
-each of these five:
+Go to the [**IAM console**](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/home) → left sidebar **Roles** → click **Create role**,
+for each of these five:
 
-- Trusted entity type: **AWS
-  service**, Use case: search and select **Elastic Container Service
-  Task** and select **Elastic Container Service
-  Task** from the list → click **Next** → search for and check
-  `AmazonECSTaskExecutionRolePolicy` → click **Next** → name it **`bluegreen-demo-task-exec-role`**, click
+- Trusted entity type: **AWS service**, Use case: search and select
+  **Elastic Container Service**, then select **Elastic Container Service
+  Task** from the use case list that appears → click **Next** → search
+  for and check `AmazonECSTaskExecutionRolePolicy` → click **Next** →
+  name it **`bluegreen-demo-task-exec-role`**, click **Create role**
+- Trusted entity type: **AWS service**, Use case: search and select
+  **Elastic Container Service**, then select **Elastic Container Service
+  Task** from the use case list that appears → click **Next** → don't
+  attach any policy yet (this demo app doesn't call other AWS services)
+  → click **Next** → name it **`bluegreen-demo-task-role`**, click
   **Create role**
-- Trusted entity type: **AWS
-  service**, Use case: search and select **Elastic Container Service
-  Task** and select **Elastic Container Service
-  Task** from the list → click **Next** → don't attach any policy
-  yet (this demo app doesn't call other AWS services) → click **Next** →
-  name it **`bluegreen-demo-task-role`**, click **Create role**
-- Trusted entity type: **AWS
-  service**, Use case: search for **Elastic Container Service**, then
-  choose **'Elastic Container Service for Load Balancers'**
-  → click **Next** →
-  `AmazonECSInfrastructureRolePolicyForLoadBalancers` should already be attached → click **Next** →
-  name it **`bluegreen-demo-ecs-infra-role`**, click **Create role**. (This role is new — it's what lets ECS
-  itself flip the listener rule between blue and green during a
-  deployment, replacing what CodeDeploy's role used to do.)
-- Trusted entity type: **AWS
-  service**, Use case: search for and select **CodeBuild** → click
-  **Next**.
+- Trusted entity type: **AWS service**, Use case: search for **Elastic
+  Container Service**, then choose **"Elastic Container Service for Load
+  Balancers"** → click **Next** →
+  `AmazonECSInfrastructureRolePolicyForLoadBalancers` should already be
+  attached → click **Next** → name it
+  **`bluegreen-demo-ecs-infra-role`**, click **Create role**. (This role
+  is new — it's what lets ECS itself flip the listener rule between blue
+  and green during a deployment, replacing what CodeDeploy's role used
+  to do.)
+- Trusted entity type: **AWS service**, Use case: search for and select
+  **CodeBuild** → click **Next**.
 
 Now attach the actual permissions this role needs, before you ever create
 the CodeBuild project — this is the fix for a very common failure where
@@ -367,8 +359,8 @@ because the role CodeBuild auto-generates for you by default only covers
 logging and basic artifact access, not ECR. Doing it here, once, means
 you never have to come back and patch it later:
 
--  Click on create **inline policy**
--  Switch to the **JSON** tab, delete the placeholder content, and paste this:
+- Click **Create inline policy**
+- Switch to the **JSON** tab, delete the placeholder content, and paste this:
 
 ```json
 {
@@ -415,8 +407,8 @@ you never have to come back and patch it later:
 }
 ```
 
-- Name it `bluegreen-demo-codebuild-role`
-- Name the policy `bluegreen-demo-codebuild-inline`,
+- Name the policy `bluegreen-demo-codebuild-inline`
+- Name the role `bluegreen-demo-codebuild-role`
 - Click **Create role**
 
 The S3 permissions use `Resource: "*"` here rather than a specific bucket
@@ -425,12 +417,12 @@ created in Step 10. That's loose for a real production setup (worth
 tightening to the actual bucket ARN once you know it), fine for getting
 this working the first time.
 
-
 ![IAM roles created for the project](images/roles.png)
 
 ## Step 8 — ECS cluster, task definition, and service
 
-1. **ECS console** or follow for [here](https://us-east-1.console.aws.amazon.com/ecs/v2/getStarted?region=us-east-1) → left sidebar **Clusters** → click **Create cluster**
+1. **ECS console**, or follow this
+   [**link**](https://us-east-1.console.aws.amazon.com/ecs/v2/getStarted?region=us-east-1) → left sidebar **Clusters** → click **Create cluster**
 2. Name: `bluegreen-demo-cluster`
 3. Infrastructure: check **AWS Fargate (serverless)**
 4. Click **Create**
@@ -443,69 +435,69 @@ this working the first time.
 11. Under **Container 1**: name `bluegreen-demo-container`, Image URI:
     paste the ECR image URI from Step 5, Container port: `80`
 12. Under **Logging**, turn on **Use log collection**, log group name
-    `/ecs/bluegreen-demo`, leave everything as it is
+    `/ecs/bluegreen-demo`, leave everything else as it is
 13. Click **Create**
-
 
 ![ECS task definition configuration](images/task-definition.png)
 
 14. Open the cluster `bluegreen-demo-cluster` → click **Create service**
-    (or from the task definition page, use the **Deploy** menu → **Create
-    service**)
-15. Choose the **task definition family** we created early which is **bluegreen-demo-task**
-16. Task definition family: `bluegreen-demo-task`, revision: latest
-17. Service name: `bluegreen-demo-service`
-18. Compute options: **Launch type**, `FARGATE`
-19. Desired tasks: `2`
-20. Under **Deployment options**, choose **Deployment strategy: Blue/green**
-    — this is the setting that replaces what used to require a separate
-    CodeDeploy application, don't miss it
-21. Under the **Deployment Bake Time**, you can type **3**
-Bake time: AWS defaults this to 15 minutes, which makes iterating on
-    a test setup painfully slow. Set it to something short like 3 minutes
-    for now — see the note right after Step 11 for exactly what this
-    setting does and doesn't control before you assume a short bake time
-    is unsafe
-22. In **Deployment lifecycle
-    hooks** → click **Add**. This is the part that actually gates
-    production cutover — unlike everything above it, which just
-    configures *how* the shift happens, not *whether* it's allowed to
-    happen without anyone checking first
-32. Choose hook type **Pause**
-33. Lifecycle stages: select **PRE_PRODUCTION_TRAFFIC_SHIFT** — this
+    (or from the task definition page, use the **Deploy** menu →
+    **Create service**)
+15. Task definition family: `bluegreen-demo-task`, revision: latest
+16. Service name: `bluegreen-demo-service`
+17. Compute options: **Launch type**, `FARGATE`
+18. Desired tasks: `2`
+19. Under **Deployment options**, choose **Deployment strategy:
+    Blue/green** — this is the setting that replaces what used to
+    require a separate CodeDeploy application, don't miss it
+20. Under **Deployment bake time**, type `3`. AWS defaults this to 15
+    minutes, which makes iterating on a test setup painfully slow — see
+    the note right after Step 11 for exactly what this setting does and
+    doesn't control before you assume a short bake time is unsafe
+21. Under **Deployment lifecycle hooks**, click **Add**. This is the
+    part that actually gates production cutover — unlike everything
+    above it, which just configures *how* the shift happens, not
+    *whether* it's allowed to happen without anyone checking first
+22. Choose hook type **Pause**
+23. Lifecycle stages: select **PRE_PRODUCTION_TRAFFIC_SHIFT** — this
     pauses right after green has already received test traffic, but
     before it gets anything real
-34. Set a timeout — 60 minutes is reasonable for testing. Leave the
+24. Set a timeout — 60 minutes is reasonable for testing. Leave the
     timeout action as **Roll back** (the default): if you forget to
     approve it, an unattended deployment should fail safe and revert,
     not quietly go live on its own
-21. Under **Networking**: VPC `bluegreen-demo-vpc`, both public subnets,
+25. Under **Networking**: VPC `bluegreen-demo-vpc`, both public subnets,
     security group `bluegreen-demo-svc-sg`, turn on **Public IP**
-22. Under **Load balancing**: choose **Application Load Balancer**
-23. Load balancer: `bluegreen-demo-alb`
-24. Choose the vpc we created.
-25. Under the role choose `bluegreen-demo-ecs-infra-role`
-26. Container to load balance: `bluegreen-demo-container 80:80`
-27. Under the **Load Balancer Type**, choose **Application Load Balancer**
-28. Under **Application Load Balancer**, choose **use an existing load balancer**, then choose the **bluegreen-demo-alb**
-29. Under **Listener**, then click **use and existing listener**
-30. Choose **HTTP:80**, under **production listener rule** choose **Priority: 2** and under **Test Listener Rule** choose **Priority: 1**
-31. Target group: `bluegreen-demo-tg-blue`
-32. Green target group: `bluegreen-demo-tg-green`
-33. Click **Create**
+26. Under **Load balancing**, choose **Application Load Balancer**
+27. Under **Load Balancer Type**, choose **Application Load Balancer**
+28. Under **Application Load Balancer**, choose **Use an existing load
+    balancer**, then choose `bluegreen-demo-alb`
+29. Under **Listener**, click **Use an existing listener**
+30. Choose **HTTP:80** — under **Production listener rule** choose
+    **Priority: 2**, and under **Test listener rule** choose **Priority: 1**
+31. Under the role, choose `bluegreen-demo-ecs-infra-role`
+32. Container to load balance: `bluegreen-demo-container 80:80`
+33. Target group: `bluegreen-demo-tg-blue`
+34. Green target group: `bluegreen-demo-tg-green`
+35. Click **Create**
 
 ![ECS service creation screen](images/service.png)
 
-33. Open the ECS service → deployment timeline to watch it progress through each phase in real time
+Creating the service kicks off its first deployment, and since manual
+approval is on, this first deployment pauses too, just like every one
+after it will:
 
-34. The deployment should now stop at Test traffic shift or wait till it gets to, showing status **Awaiting action** — this is the pause hook we set up.
+36. Open the ECS service → deployment timeline to watch it progress
+    through each phase in real time
+37. The deployment should stop at **Test traffic shift**, showing status
+    **Awaiting action** — this is the pause hook you just set up
 
-![ECS awaiting action](images/take-action.png)
+![Deployment paused and awaiting manual approval](images/take-action.png)
 
-35. Click **Take Action** → **Continue** to let it proceed to Production traffic shift.
+38. Click **Take Action → Continue** to let it proceed to **Production
+    traffic shift**
 
-![ECS take action screen](images/take-action-continue.png)
-
+![Clicking Continue to approve the deployment](images/take-action-continue.png)
 
 ## Step 8a — Confirm the blue environment actually works
 
@@ -520,7 +512,6 @@ guess which layer the problem is in.
    status **Running** and health status **Healthy** (give it a minute or
    two after creation)
 
-
 ![ECS service tasks running and healthy](images/service-tasks.png)
 
 2. Go to the **EC2 console → Load Balancers → `bluegreen-demo-alb`** and
@@ -530,7 +521,6 @@ guess which layer the problem is in.
 ```bash
 curl http://<alb-dns-name>/
 ```
-
 
 ![curl response showing Version v1 from the load balancer](images/test-v1.png)
 
@@ -548,21 +538,27 @@ problems from here on are isolated to the pipeline you're about to build.
 
 ## Step 9 — CodeBuild project
 
-1. Go to [**CodeBuild console**](https://us-east-1.console.aws.amazon.com/codesuite/codebuild/projects?region=us-east-1&projects-meta=eyJmIjp7InRleHQiOiIiLCJzaGFyZWQiOmZhbHNlLCJ0YWdnZWQiOmZhbHNlfSwicyI6eyJwcm9wZXJ0eSI6IkxBU1RfTU9ESUZJRURfVElNRSIsImRpcmVjdGlvbiI6LTF9LCJuIjoyMCwiaSI6MH0) → click **Create build project**
+1. Go to the [**CodeBuild console**](https://us-east-1.console.aws.amazon.com/codesuite/codebuild/projects?region=us-east-1&projects-meta=eyJmIjp7InRleHQiOiIiLCJzaGFyZWQiOmZhbHNlLCJ0YWdnZWQiOmZhbHNlfSwicyI6eyJwcm9wZXJ0eSI6IkxBU1RfTU9ESUZJRURfVElNRSIsImRpcmVjdGlvbiI6LTF9LCJuIjoyMCwiaSI6MH0) → click **Create build project**
 2. Project name: `bluegreen-demo-build`
-3. Source provider: **Github**. Under **Credential**, click on **Use override credentials for this project only**
-Under the **connection**, click `create a new Oauth app token connection`, follow the prompt to login to your github and save the secret name with any name of your choice. Then choose the connection created. Then copy your repo url and paste in the Github Repository section, for example: `https://github.com/Gbengard/blue-green-ecs-deployment` and then put your branch name, for example, `main`
+3. Source provider: **GitHub**. Under **Credential**, click **Use
+   override credentials for this project only**. Under **Connection**,
+   click **Create a new OAuth app token connection**, follow the prompt
+   to log in to your GitHub account and save the secret name as anything
+   you like. Choose the connection you just created, then paste your
+   repo URL into the GitHub Repository field — for example,
+   `https://github.com/Gbengard/blue-green-ecs-deployment` — and your
+   branch name, for example `main`
 4. Environment image: **Managed image**
 5. Operating system: **Amazon Linux**
 6. Runtime: **Standard**
 7. Image: use the latest available standard image
 8. Service role: **Existing service role** → select
-    `bluegreen-demo-codebuild-role` (the one you built with full
-    permissions back in Step 7 — no need to create a new one here, and
-    nothing to patch afterward)
-9. Check **Enable this flag if you want to build Docker images or want your builds to get elevated privileges** — required, since building a Docker image
-    inside CodeBuild needs this
-
+   `bluegreen-demo-codebuild-role` (the one you built with full
+   permissions back in Step 7 — no need to create a new one here, and
+   nothing to patch afterward)
+9. Check **Enable this flag if you want to build Docker images or want
+   your builds to get elevated privileges** — required, since building a
+   Docker image inside CodeBuild needs this
 10. Expand **Additional configuration**, scroll to **Environment
     variables**, and add these four — the buildspec reads them and the
     build fails (or silently builds a malformed ECR URL) without them:
@@ -580,23 +576,22 @@ Under the **connection**, click `create a new Oauth app token connection`, follo
     `pipeline-config/buildspec.yml`
 12. Click **Create build project**
 
-
 ![CodeBuild project configuration](images/code-build.png)
 
 That's it.
 
 ## Step 10 — CodePipeline
 
-1. Go to [**CodePipeline console**](https://us-east-1.console.aws.amazon.com/codesuite/codepipeline/home?region=us-east-1) → click **Create pipeline**
+1. Go to the [**CodePipeline console**](https://us-east-1.console.aws.amazon.com/codesuite/codepipeline/home?region=us-east-1) → click **Create pipeline**
 2. Choose **Build custom pipeline** → click **Next**
 3. Pipeline name: `bluegreen-demo-pipeline`
 4. Execution mode: leave as **Queued** → click **Next**
-5. Source provider: **GitHub (via Oauth App)**
-6. Click **Connect to GitHub with Oauth** — this opens the authorization screen; a
-   person has to click through this manually.
+5. Source provider: **GitHub (via OAuth App)**
+6. Click **Connect to GitHub with OAuth** — this opens the authorization
+   screen; a person has to click through this manually
 7. Once connected, choose your repository and branch → click **Next**
 8. Build provider: **AWS CodeBuild**, project: `bluegreen-demo-build` →
-   click **Next** and click **Next** again
+   click **Next** twice
 9. Deploy provider: **Amazon ECS** (not "Amazon ECS (Blue/Green)" — that
    older option is the CodeDeploy-powered one; plain **Amazon ECS** is
    what you want here, since the service itself already handles the
@@ -606,53 +601,47 @@ That's it.
 12. Image definitions file: `imagedefinitions.json` → click **Next**
 13. Review everything → click **Create pipeline**
 
-
 ![CodePipeline creation screen](images/codepipeline.png)
 
-14. The Pipeline will be automatically triggered. 
-15. Go to your ECS then, click on `Service` and then click on `Deployment`, when it asked you `take action`, click on it and click on `Continue`.
-16. Wait till the deployment and the pipeline is successful
-
+14. The pipeline triggers automatically
+15. Go to the ECS service → **Deployments**, and when it asks you to
+    **Take Action**, click it, then click **Continue**
+16. Wait until the deployment and the pipeline both show successful
 
 ![Pipeline execution completed successfully](images/codepipeline-successful.png)
 
-
 ## Step 11 — Test it
 
-1. Push a small change to your GitHub repo (edit the text in `index.html` which is pipeline-config. You can change Version: V1 to Version: V2)
+1. Push a small change to your GitHub repo (edit the text in
+   `pipeline-config/index.html` — change `Version: v1` to `Version: v2`)
 2. Watch the pipeline run in the CodePipeline console
 3. Open the ECS service → deployment timeline to watch it progress
    through each phase in real time
-4. While it's in **Scaling up green tasks** or **Test traffic shift**, hit
-   the load balancer URL with the test header set — a browser can't add
-   custom headers easily, so use curl:
-   `curl -H "X-Bg-Test: true" http://<alb-dns-name>/` — you should see the
-   new version there, before it's live
-
+4. While it's in **Scaling up green tasks** or **Test traffic shift**,
+   hit the load balancer URL with the test header set — a browser can't
+   add custom headers easily, so use curl:
+   `curl -H "X-Bg-Test: true" http://<alb-dns-name>/` — you should see
+   the new version there, before it's live
 
 ![curl with the test header showing the new version before cutover](images/v2-green-test.png)
 
 5. The deployment should now stop at **Test traffic shift**, showing
    status **Awaiting action** — this is the pause hook from Step 8
-   working. At this point: real traffic is still on the old version,
+   working. At this point, real traffic is still on the old version;
    confirm that with a plain `curl http://<alb-dns-name>/` (no header) —
    it should still show the old version
-
 
 ![Deployment paused and awaiting manual approval](images/take-action.png)
 
 6. Once you're satisfied the new version looks right, click **Take
-   Action** → **Continue** to let it proceed to **Production traffic
-   shift**. (Or click **Roll back** instead, to see what happens when you
-   reject a deployment outright — the new tasks never get production
-   traffic at all)
-
+   Action → Continue** to let it proceed to **Production traffic shift**.
+   (Or click **Roll back** instead, to see what happens when you reject a
+   deployment outright — the new tasks never get production traffic at all)
 
 ![Clicking Continue to approve the deployment](images/take-action-continue.png)
 
 7. Once it continues, refresh the load balancer's DNS name normally (no
    header) — it should now show the new version
-
 
 ![curl without the header showing the new version live after cutover](images/v2-blue.png)
 
@@ -670,7 +659,6 @@ approval gate from Step 8, which is a genuinely different mechanism doing
 a genuinely different job.
 
 The deployment actually happens in this order:
-
 
 ![Order of phases in a blue-green deployment](images/deployment-order.png)
 
@@ -747,37 +735,43 @@ a VPC that still has subnets in it.
    pipeline** → type the pipeline name to confirm → click **Delete**
 2. **CodePipeline's S3 artifact bucket** — this one's easy to forget,
    since the console creates it for you automatically and doesn't call
-   attention to it again. Go to the [**S3 console**](https://us-east-1.console.aws.amazon.com/s3/home?region=us-east-1#) and look for a bucket
-   named something like `codepipeline-<region>-<random-id>` (or whatever
-   you named it, if you specified a custom one when creating the
-   pipeline). Open it, select all objects, click **Delete**, type
-   `permanently delete` to confirm, then go back and delete the bucket
-   itself the same way. It has to be empty before S3 will let you delete it.
+   attention to it again. Go to the
+   [**S3 console**](https://us-east-1.console.aws.amazon.com/s3/home?region=us-east-1#)
+   and look for a bucket named something like
+   `codepipeline-<region>-<random-id>` (or whatever you named it, if you
+   specified a custom one when creating the pipeline). Open it, select
+   all objects, click **Delete**, type `permanently delete` to confirm,
+   then go back and delete the bucket itself the same way. It has to be
+   empty before S3 will let you delete it.
 3. **CodeBuild** — open the project → **Delete build project** → confirm
-4. Go to [**Secret Manager**](https://us-east-1.console.aws.amazon.com/secretsmanager/listsecrets?region=us-east-1), click on the `secret`, click on `Action`, then `Delete`, on the `Waiting Period` choose 7.
-5. **ECS service** — open the service → click **Delete service**, click on **Force Delete** → type delete to confirm
+4. **Secrets Manager** — go to the
+   [**Secrets Manager console**](https://us-east-1.console.aws.amazon.com/secretsmanager/listsecrets?region=us-east-1),
+   click the secret CodeBuild created for your GitHub OAuth connection →
+   **Actions → Delete** → set the waiting period to 7 days
+5. **ECS service** — open the service → click **Delete service** → click
+   **Force delete** → type `delete` to confirm
 6. **ECS cluster** — once the service is gone, open the cluster → click
    **Delete cluster** → type the cluster name to confirm
 7. **Task definitions** — open **Task definitions → bluegreen-demo-task**,
    select all revisions, click **Deregister** (this marks them inactive
    — they'll still show up in the list unless you also permanently delete
-   them). To fully remove them: change **filter status** to **inactive** with the same revisions selected, click
-   **Actions → Delete** — this option only appears once a revision is
-   already deregistered
+   them). To fully remove them: change the filter to **Inactive**, select
+   the same revisions, click **Actions → Delete** — this option only
+   appears once a revision is already deregistered
 8. **Load balancer** — open `bluegreen-demo-alb` → **Actions → Delete
    load balancer** → confirm (delete this first, before the target
    groups, since it's using them)
 9. **Target groups** — check `bluegreen-demo-tg-blue` and
-   `bluegreen-demo-tg-green` and click on `action` then delete.
-10. **ECR repository** — open `bluegreen-demo-app` → **Delete** → type the
-    repository name to confirm (this force-deletes it along with any
+   `bluegreen-demo-tg-green`, then **Actions → Delete**
+10. **ECR repository** — open `bluegreen-demo-app` → **Delete** → type
+    the repository name to confirm (this force-deletes it along with any
     images still inside)
-11. **CloudWatch log group** — go to the **CloudWatch console → Log Management → Log
-    groups**, select `/ecs/bluegreen-demo`, click **Actions → Delete log
-    group** → confirm. Nothing else deletes this one for you — it sits
-    there quietly running up a small storage cost until you remove it
-    yourself
-12. **IAM roles** — delete all four roles created in Step 7: select each
+11. **CloudWatch log group** — go to **CloudWatch console → Log
+    Management → Log groups**, select `/ecs/bluegreen-demo`, click
+    **Actions → Delete log group** → confirm. Nothing else deletes this
+    one for you — it sits there quietly running up a small storage cost
+    until you remove it yourself
+12. **IAM roles** — delete all five roles created in Step 7: select each
     one → **Delete** → type the role name to confirm
 13. **Security groups** — delete `bluegreen-demo-svc-sg` first, then
     `bluegreen-demo-alb-sg` (the service one references the ALB one, so
