@@ -17,6 +17,9 @@ approval before cutover — a plain ECS feature, no Lambda required.
 
 ![Architecture diagram](images/bluegreen-ecs.png)
 
+![Architecture diagram](images/resources-diagram.png)
+
+
 **Read the full guide: [`guide.md`](./guide.md)** — it covers the
 introduction, architecture, a click-by-click walkthrough in the AWS
 Console, the full CloudFormation templates with deployment and teardown
