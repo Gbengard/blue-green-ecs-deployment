@@ -15,7 +15,7 @@ CodeDeploy application, deployment group, or `appspec.yaml` needed. On
 top of that, this project adds a `PAUSE` lifecycle hook for manual
 approval before cutover — a plain ECS feature, no Lambda required.
 
-![Architecture diagram](images/architecture-diagram.png)
+![Architecture diagram](images/bluegreen-ecs.png)
 
 **Read the full guide: [`guide.md`](./guide.md)** — it covers the
 introduction, architecture, a click-by-click walkthrough in the AWS
