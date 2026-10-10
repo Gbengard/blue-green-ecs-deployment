@@ -129,8 +129,8 @@ easy to find again later. Keep this table open as you work through it.
 # Manual Approach (AWS Console)
 
 Every step below tells you exactly which console page to open, what to
-click, what to type, and which button ends the step. Where it's worth
-capturing for your own notes or a write-up, I've marked what to screenshot.
+click, what to type, and which button ends the step. Screenshots are
+included wherever they help.
 
 ## Step 1 — Create the VPC
 
@@ -263,8 +263,8 @@ Then fully log out and back in (or reboot) — a new group membership
 doesn't apply to already-open terminal sessions. Confirm it worked with
 `docker run hello-world`; if that runs without `sudo`, you're set.
 
-7. Click **Close** on the dialog once the push finishes, then refresh the
-   repository page — you should see one image listed
+Once the push finishes, click **Close** on the dialog, then refresh the
+repository page — you should see one image listed.
 
 ![ECR repository showing the pushed image](images/ecr.png)
 
@@ -327,7 +327,7 @@ carrying a specific test header get caught by the test rule first.
 ## Step 7 — IAM roles
 
 Go to the [**IAM console**](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/home) → left sidebar **Roles** → click **Create role**,
-for each of these five:
+for each of these four:
 
 - Trusted entity type: **AWS service**, Use case: search and select
   **Elastic Container Service**, then select **Elastic Container Service
@@ -407,8 +407,8 @@ you never have to come back and patch it later:
 }
 ```
 
+- Name it `bluegreen-demo-codebuild-role`
 - Name the policy `bluegreen-demo-codebuild-inline`
-- Name the role `bluegreen-demo-codebuild-role`
 - Click **Create role**
 
 The S3 permissions use `Resource: "*"` here rather than a specific bucket
@@ -443,43 +443,48 @@ this working the first time.
 14. Open the cluster `bluegreen-demo-cluster` → click **Create service**
     (or from the task definition page, use the **Deploy** menu →
     **Create service**)
-15. Task definition family: `bluegreen-demo-task`, revision: latest
-16. Service name: `bluegreen-demo-service`
-17. Compute options: **Launch type**, `FARGATE`
-18. Desired tasks: `2`
-19. Under **Deployment options**, choose **Deployment strategy:
+15. Under **Task definition family**, choose the one we created earlier:
+    `bluegreen-demo-task`
+16. Task definition revision: **latest**
+17. Service name: `bluegreen-demo-service`
+18. Compute options: **Launch type**, `FARGATE`
+19. Desired tasks: `2`
+20. Under **Deployment options**, choose **Deployment strategy:
     Blue/green** — this is the setting that replaces what used to
     require a separate CodeDeploy application, don't miss it
-20. Under **Deployment bake time**, type `3`. AWS defaults this to 15
+21. Under **Deployment bake time**, type `3`. AWS defaults this to 15
     minutes, which makes iterating on a test setup painfully slow — see
     the note right after Step 11 for exactly what this setting does and
     doesn't control before you assume a short bake time is unsafe
-21. Under **Deployment lifecycle hooks**, click **Add**. This is the
+22. Under **Deployment lifecycle hooks**, click **Add**. This is the
     part that actually gates production cutover — unlike everything
     above it, which just configures *how* the shift happens, not
     *whether* it's allowed to happen without anyone checking first
-22. Choose hook type **Pause**
-23. Lifecycle stages: select **PRE_PRODUCTION_TRAFFIC_SHIFT** — this
+23. Choose hook type **Pause**
+24. Lifecycle stages: select **PRE_PRODUCTION_TRAFFIC_SHIFT** — this
     pauses right after green has already received test traffic, but
     before it gets anything real
-24. Set a timeout — 60 minutes is reasonable for testing. Leave the
+25. Set a timeout — 60 minutes is reasonable for testing. Leave the
     timeout action as **Roll back** (the default): if you forget to
     approve it, an unattended deployment should fail safe and revert,
     not quietly go live on its own
-25. Under **Networking**: VPC `bluegreen-demo-vpc`, both public subnets,
+26. Under **Networking**: VPC `bluegreen-demo-vpc`, both public subnets,
     security group `bluegreen-demo-svc-sg`, turn on **Public IP**
-26. Under **Load balancing**, choose **Application Load Balancer**
-27. Under **Load Balancer Type**, choose **Application Load Balancer**
-28. Under **Application Load Balancer**, choose **Use an existing load
+27. Under **Load balancing**: choose **Application Load Balancer**
+28. Load balancer: `bluegreen-demo-alb`
+29. Choose the VPC you created (`bluegreen-demo-vpc`)
+30. Under the role, choose `bluegreen-demo-ecs-infra-role`
+31. Container to load balance: `bluegreen-demo-container 80:80`
+32. Under **Load Balancer Type**, choose **Application Load Balancer**
+33. Under **Application Load Balancer**, choose **Use an existing load
     balancer**, then choose `bluegreen-demo-alb`
-29. Under **Listener**, click **Use an existing listener**
-30. Choose **HTTP:80** — under **Production listener rule** choose
-    **Priority: 2**, and under **Test listener rule** choose **Priority: 1**
-31. Under the role, choose `bluegreen-demo-ecs-infra-role`
-32. Container to load balance: `bluegreen-demo-container 80:80`
-33. Target group: `bluegreen-demo-tg-blue`
-34. Green target group: `bluegreen-demo-tg-green`
-35. Click **Create**
+34. Under **Listener**, click **Use an existing listener**
+35. Choose **HTTP:80** — under **Production listener rule** choose
+    **Priority: 2**, and under **Test listener rule** choose
+    **Priority: 1**
+36. Target group: `bluegreen-demo-tg-blue`
+37. Green target group: `bluegreen-demo-tg-green`
+38. Click **Create**
 
 ![ECS service creation screen](images/service.png)
 
@@ -487,14 +492,14 @@ Creating the service kicks off its first deployment, and since manual
 approval is on, this first deployment pauses too, just like every one
 after it will:
 
-36. Open the ECS service → deployment timeline to watch it progress
+39. Open the ECS service → deployment timeline to watch it progress
     through each phase in real time
-37. The deployment should stop at **Test traffic shift**, showing status
+40. The deployment should stop at **Test traffic shift**, showing status
     **Awaiting action** — this is the pause hook you just set up
 
 ![Deployment paused and awaiting manual approval](images/take-action.png)
 
-38. Click **Take Action → Continue** to let it proceed to **Production
+41. Click **Take Action → Continue** to let it proceed to **Production
     traffic shift**
 
 ![Clicking Continue to approve the deployment](images/take-action-continue.png)
@@ -538,7 +543,7 @@ problems from here on are isolated to the pipeline you're about to build.
 
 ## Step 9 — CodeBuild project
 
-1. Go to the [**CodeBuild console**](https://us-east-1.console.aws.amazon.com/codesuite/codebuild/projects?region=us-east-1&projects-meta=eyJmIjp7InRleHQiOiIiLCJzaGFyZWQiOmZhbHNlLCJ0YWdnZWQiOmZhbHNlfSwicyI6eyJwcm9wZXJ0eSI6IkxBU1RfTU9ESUZJRURfVElNRSIsImRpcmVjdGlvbiI6LTF9LCJuIjoyMCwiaSI6MH0) → click **Create build project**
+1. Go to the [**CodeBuild console**](https://us-east-1.console.aws.amazon.com/codesuite/codebuild/projects?region=us-east-1) → click **Create build project**
 2. Project name: `bluegreen-demo-build`
 3. Source provider: **GitHub**. Under **Credential**, click **Use
    override credentials for this project only**. Under **Connection**,
@@ -684,11 +689,11 @@ back quickly. A 3-minute bake time and a 15-minute one behave identically
 for how fast your change goes live once approved; the difference only
 shows up if something goes wrong shortly after cutover.
 
-If you'd set `EnableManualApproval` to `false` (dropping the hook
-entirely), step 3 above wouldn't exist — the production shift would
+If you skipped the pause hook in Step 8 (or set the
+`EnableManualApproval` parameter to `false` in the CloudFormation
+version), step 3 above wouldn't exist — the production shift would
 happen automatically the moment green is healthy, with nothing gating it
-at all. That was this project's original behavior, and it's still what
-you get if you turn the hook off.
+at all.
 
 **Is traffic ever split between blue and green while this is happening?
 No — not with this project's setup.** ECS actually offers three different
@@ -705,7 +710,7 @@ gradual, percentage-based exposure to real traffic — not just the private
 test-header path — that's a different strategy (`LINEAR` or `CANARY`),
 not something this `BLUE_GREEN` setup does.
 
-This project *does* now gate the cutover — that's exactly what the
+This project gates the cutover — that's exactly what the
 manual approval hook from Step 8 is for, and it's covered in detail in
 the "What bake time actually controls" section above. What's still
 missing, if you want a bad deployment to be rejected *automatically*
@@ -771,8 +776,11 @@ a VPC that still has subnets in it.
     **Actions → Delete log group** → confirm. Nothing else deletes this
     one for you — it sits there quietly running up a small storage cost
     until you remove it yourself
-12. **IAM roles** — delete all five roles created in Step 7: select each
-    one → **Delete** → type the role name to confirm
+12. **IAM roles** — delete the four roles created in Step 7, plus the
+    service role the CodePipeline console created for the pipeline in
+    Step 10 (look for a role whose name starts with
+    `AWSCodePipelineServiceRole`): select each one → **Delete** → type
+    the role name to confirm
 13. **Security groups** — delete `bluegreen-demo-svc-sg` first, then
     `bluegreen-demo-alb-sg` (the service one references the ALB one, so
     it has to go first)
@@ -1755,7 +1763,7 @@ out and back in.
 in the build**
 If you built the CodeBuild project by hand in the console, these have to
 be added manually as environment variables on the project — they don't
-exist by default. See Step 9, which now includes `AWS_REGION` too — it's
+exist by default. See Step 9, which includes `AWS_REGION` too — it's
 technically a CodeBuild built-in, but it didn't reliably resolve in
 practice, so it's set explicitly here rather than assumed.
 
@@ -1770,10 +1778,9 @@ not left to CodeBuild's built-in one.
 
 **Build fails trying to find a Dockerfile, or `index.html` isn't found**
 Two separate things can cause this, check both:
-1. The sample app file in this repo is named `Dockerfile` (not
-   `Dockerfile.sample` — an earlier version of this project used that
-   name and it broke `docker build .`, since Docker looks for a file
-   literally named `Dockerfile` unless you pass `-f`)
+1. The sample app file in this repo is named `Dockerfile`, not
+   `Dockerfile.sample` — Docker looks for a file literally named
+   `Dockerfile` unless you pass `-f`
 2. The buildspec needs to actually be looking in the right folder. This
    project keeps `pipeline-config/` as a subfolder in the repo rather
    than flattening it to the root (see Prerequisites), and the buildspec
@@ -1819,7 +1826,7 @@ had been narrowed down to only port 80 (some AWS accounts don't give new
 security groups an automatic allow-all outbound rule, so it's possible to
 end up here even without editing anything by hand). Fix: add an outbound
 rule allowing HTTPS (port 443) to `0.0.0.0/0` on that security group. See
-Step 4 — the CloudFormation template now sets this explicitly for exactly
+Step 4 — the CloudFormation template sets this explicitly for exactly
 this reason.
 
 **Do I need to add CloudWatch Logs permissions to the task execution role?**
